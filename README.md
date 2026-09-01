@@ -94,12 +94,13 @@ python3 main.py --record-only --symbol SNDK --primary lighter-rh --hedge entropy
 ```
 
 Let it run for at least a few hours (a day is better — premiums have
-intraday regimes). It writes `logs/minutes.csv`.
+intraday regimes). It writes a symbol-specific file such as
+`logs/minutes_BTC.csv`; `recorder.csv` supports the `{symbol}` placeholder.
 
 **2. Analyze and set your thresholds:**
 
 ```bash
-python3 tools/analyze.py
+python3 tools/analyze.py --csv logs/minutes_BTC.csv
 ```
 
 It prints the premium distribution, how often each candidate band would have
@@ -167,7 +168,7 @@ errors), credentials in `.env`, and the markets on the command line
 | `inventory.scale_bps` / `floor_frac` | inventory ladder (extra bps past `floor_frac` of the cap) | 10 / 0.5 |
 | `execution.premium_persist_sec` | edge must persist before firing | 0.3 |
 | `execution.*` | slippage bounds, timeouts, reconcile cadence… | see file |
-| `recorder.*` | minute-data recorder | on, `logs/minutes.csv` |
+| `recorder.*` | minute-data recorder | on, `logs/minutes_{symbol}.csv` |
 | `logging.dashboard` / `logging.file` | Rich dashboard on a tty; log file while it runs | on, `logs/engine.log` |
 
 ## Credentials (`.env`, live only)

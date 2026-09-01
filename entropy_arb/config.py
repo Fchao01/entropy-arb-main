@@ -243,6 +243,15 @@ def _get(d: dict, section: str, key: str, default):
     return (d.get(section) or {}).get(key, default)
 
 
+def _symbol_path(value: str, symbol: str) -> str:
+    """Expand {symbol}; legacy paths are made symbol-specific too."""
+    value = str(value)
+    if "{symbol}" in value:
+        return value.format(symbol=symbol)
+    root, ext = os.path.splitext(value)
+    return f"{root}_{symbol}{ext}"
+
+
 # ------------------------------------------------------------------ env layer
 
 def _env_s(name: str) -> Optional[str]:
@@ -395,10 +404,15 @@ def load_config(config_file: str = "config.yaml", env_file: str = ".env", *,
         venue_probe_sec=float(_get(raw, "execution", "venue_probe_sec", 30.0)),
         http_keepalive_sec=float(_get(raw, "execution", "http_keepalive_sec", 10.0)),
         recorder_enabled=bool(_get(raw, "recorder", "enabled", True)),
-        recorder_csv=_get(raw, "recorder", "csv", "logs/minutes.csv"),
+        # Allow one shared YAML to be used by multiple symbols without
+        # mixing recorder rows: ``{symbol}`` is expanded at startup.
+        recorder_csv=_symbol_path(_get(raw, "recorder", "csv",
+                                       "logs/minutes_{symbol}.csv"), symbol),
         log_level=str(_get(raw, "logging", "level", "INFO")).upper(),
         status_interval_sec=float(_get(raw, "logging", "status_interval_sec", 30.0)),
-        trades_csv=_get(raw, "logging", "trades_csv", "logs/trades.csv"),
+        trades_csv=_symbol_path(_get(raw, "logging", "trades_csv",
+                                     "logs/trades_{symbol}.csv"), symbol),
         dashboard=bool(_get(raw, "logging", "dashboard", True)),
-        log_file=_get(raw, "logging", "file", "logs/engine.log"),
+        log_file=_symbol_path(_get(raw, "logging", "file",
+                                   "logs/engine_{symbol}.log"), symbol),
     )

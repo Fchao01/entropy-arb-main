@@ -87,12 +87,13 @@ python3 main.py --record-only --symbol SNDK --primary lighter-rh --hedge entropy
 ```
 
 至少运行几个小时（最好一整天——溢价存在日内规律），数据写入
-`logs/minutes.csv`。
+`logs/minutes_BTC.csv`（实际文件名按 `--symbol` 自动替换）。配置中的
+`recorder.csv` 支持 `{symbol}` 占位符，避免多个币种混写到同一个文件。
 
 **第二步：分析数据、设定阈值：**
 
 ```bash
-python3 tools/analyze.py
+python3 tools/analyze.py --csv logs/minutes_BTC.csv
 ```
 
 它会输出溢价分布、各档带宽的历史触发频率，以及可直接粘贴进
@@ -155,7 +156,7 @@ python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 | `inventory.scale_bps` / `floor_frac` | 库存阶梯（仓位超过上限的 `floor_frac` 后额外加价） | 10 / 0.5 |
 | `execution.premium_persist_sec` | 信号需持续多久才触发 | 0.3 |
 | `execution.*` | 滑点保护、超时、对账周期等 | 见配置文件 |
-| `recorder.*` | 分钟数据采集器 | 开启，`logs/minutes.csv` |
+| `recorder.*` | 分钟数据采集器 | 开启，`logs/minutes_{symbol}.csv` |
 | `logging.dashboard` / `logging.file` | 终端仪表盘；开启时日志写入文件 | 开启，`logs/engine.log` |
 
 ## 密钥配置（`.env`，仅实盘需要）

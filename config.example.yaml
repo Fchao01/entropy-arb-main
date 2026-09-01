@@ -90,7 +90,8 @@ execution:
 # 供 tools/analyze.py 分析并设定上方 thresholds。
 recorder:
   enabled: true
-  csv: logs/minutes.csv
+  # {symbol} is replaced by --symbol, so BTC/ETH/SNDK get separate files.
+  csv: logs/minutes_{symbol}.csv
 
 # ==================== LOGGING & DASHBOARD / 日志与仪表盘 ====================
 # On a terminal the bot shows a live Rich dashboard (books, signal, positions,
@@ -103,6 +104,6 @@ recorder:
 logging:
   level: INFO
   status_interval_sec: 30.0
-  trades_csv: logs/trades.csv
+  trades_csv: logs/trades_{symbol}.csv
   dashboard: true
-  file: logs/engine.log
+  file: logs/engine_{symbol}.log
