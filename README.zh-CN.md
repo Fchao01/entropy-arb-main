@@ -2,10 +2,10 @@
 
 **[English documentation / 英文文档 → README.md](README.md)**
 
-开源双交易所永续合约套利机器人。其中一条腿永远是 **Entropy**（Hyperliquid 上的
-`io` builder dex）；另一条腿（对冲腿）三选一：
+开源多交易所永续合约套利机器人。主腿通过 `--primary` 选择，另外可指定一或两个
+对冲腿（例如主腿 `lighter-rh`，对冲腿 `entropy,lighter`）：
 
-| `--hedge` | 交易所 | 计价货币 | 吃单费 | 协议 |
+| 交易所标识 | 交易所 | 计价货币 | 吃单费 | 协议 |
 |---|---|---|---|---|
 | `lighter` | Lighter 主网 | USDC | 0 bps | zkLighter ws（增量订单簿，异步结算） |
 | `lighter-rh` | Lighter Robinhood 链 | **USDG** | 0 bps | zkLighter ws |
@@ -22,7 +22,7 @@
 官方 websocket（`wss://api.hyperliquid.xyz/ws`），Lighter 的盘口来自 Lighter
 官方 websocket。
 
-机器人运行期间（即使没有密钥、没有开策略）会自动把两边盘口记录成**分钟级
+机器人运行期间（即使没有密钥、没有开策略）会自动把主腿与第一个对冲腿盘口记录成**分钟级
 CSV 数据**，配套的分析工具可以直接把这些数据变成策略所需的三个核心参数。
 
 ## 信号逻辑
@@ -69,10 +69,13 @@ cp config.example.yaml config.yaml       # 策略配置（阈值、规模、风�
 cp .env.example .env                     # 密钥——交易必填
 ```
 
-交易哪个市场**不在**配置文件中——每次启动时用命令行参数显式指定：
-`--symbol`（两个交易所共同交易的品种）和 `--hedge`（三选一：
-`lighter`、`lighter-rh`、`tradexyz`；Entropy 永远是
-另一条腿）。
+交易市场**不在**配置文件中——每次启动时用命令行参数显式指定：
+`--symbol`、`--primary`（主交易腿）和 `--hedge`（一个或两个对冲腿，逗号分隔）。
+例如让 Lighter Robinhood 作为主腿、同时用 Entropy 与 Lighter 主网对冲：
+
+```bash
+python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
+```
 
 本机器人**没有模拟盘**——要么采集数据（`--record-only`），要么实盘交易。
 请用采集的数据和最小的仓位上限来验证策略，而不是模拟成交。
@@ -80,7 +83,7 @@ cp .env.example .env                     # 密钥——交易必填
 **第一步：先采集数据**（不需要任何密钥）：
 
 ```bash
-python3 main.py --record-only --symbol SNDK --hedge lighter-rh
+python3 main.py --record-only --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 ```
 
 至少运行几个小时（最好一整天——溢价存在日内规律），数据写入
@@ -100,7 +103,7 @@ python3 tools/analyze.py
 
 ```bash
 pip install -r requirements-live.txt
-python3 main.py --symbol SNDK --hedge lighter-rh
+python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 ```
 
 不带 `--record-only` 运行时，只要两边行情就绪且溢价越过带宽，就会立即
@@ -136,7 +139,7 @@ python3 main.py --symbol SNDK --hedge lighter-rh
 ## 配置说明
 
 策略在 `config.yaml`（严格校验——未知键名直接报错），密钥在 `.env`。
-交易市场由命令行指定（`--symbol`、`--hedge`）。完整的双语注释参考：
+交易市场由命令行指定（`--symbol`、`--primary`、`--hedge`）。完整的双语注释参考：
 [config.example.yaml](config.example.yaml)。核心项：
 
 | 键 | 含义 | 默认值 |

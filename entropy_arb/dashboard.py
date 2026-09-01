@@ -223,7 +223,7 @@ class Dashboard:
         g.add_column(justify="left")
         g.add_column(justify="right")
         left = Text.assemble(("entropy-arb  ", "bold"),
-                             (f"{cfg.symbol} × ENTROPY · {eng.hedge.name}",
+                             (f"{cfg.symbol} × {eng.entropy.name} · {eng.hedge.name}",
                               "bold cyan"))
         right = Text()
         right.append_text(mode)
@@ -345,12 +345,18 @@ class Dashboard:
         t.add_column(self._t("hurdle bps"), justify="right")
         t.add_column(self._t("gap bps"), justify="right")
         t.add_column("", justify="left")
-        self._dir_row(t, self._t("SELL entropy → buy {h}", h=eng.hedge.name),
-                      eng.hedge, eng.entropy,
-                      cfg.midline_bps + cfg.upper_bps, "sell_entropy")
-        self._dir_row(t, self._t("BUY entropy → sell {h}", h=eng.hedge.name),
-                      eng.entropy, eng.hedge,
-                      cfg.lower_bps - cfg.midline_bps, "buy_entropy")
+        hs = getattr(eng, "hedge_venues", None) or [eng.hedge]
+        for h in hs:
+            self._dir_row(t, self._t("SELL entropy → buy {h}", h=h.name)
+                          .replace("entropy", eng.entropy.name),
+                          h, eng.entropy,
+                          cfg.midline_bps + cfg.upper_bps,
+                          f"sell_entropy:{h.key}")
+            self._dir_row(t, self._t("BUY entropy → sell {h}", h=h.name)
+                          .replace("entropy", eng.entropy.name),
+                          eng.entropy, h,
+                          cfg.lower_bps - cfg.midline_bps,
+                          f"buy_entropy:{h.key}")
         return Panel(Group(head, t),
                      title=self._t("signal — executable premium vs full "
                                    "hurdle incl. fees (● = armed)"),

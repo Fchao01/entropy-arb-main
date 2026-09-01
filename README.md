@@ -2,8 +2,9 @@
 
 **[中文文档 / Chinese documentation → README.zh-CN.md](README.zh-CN.md)**
 
-Open-source two-venue perp arbitrage bot. One leg is always **Entropy**
-(the `io` builder dex on Hyperliquid); the other leg — the hedge — is one of:
+Open-source multi-venue perp arbitrage bot. Select the primary leg with
+`--primary`, and optionally configure one or two hedge legs (for example,
+`--primary lighter-rh --hedge entropy,lighter`):
 
 | `--hedge` | venue | quote | taker fee | protocol |
 |---|---|---|---|---|
@@ -24,8 +25,8 @@ exchange that will fill the order** — Hyperliquid books come from the official
 websocket (`wss://api.hyperliquid.xyz/ws`), Lighter books from Lighter's
 official websocket.
 
-While it runs — even with no credentials and no strategy — it records both
-books to **1-minute CSV bars**, and the bundled analyzer turns that data into
+While it runs — even with no credentials and no strategy — it records the
+primary and first hedge book to **1-minute CSV bars**, and the bundled analyzer turns that data into
 the three numbers that define the whole strategy.
 
 ## The signal
@@ -77,9 +78,10 @@ cp .env.example .env                     # credentials — required to trade
 ```
 
 The markets are **not** in the config file — you state them explicitly on
-every start: `--symbol` (traded on both venues) and `--hedge` (one of
-`lighter`, `lighter-rh`, `tradexyz`; Entropy is always the
-other leg).
+every start: `--symbol`, `--primary` (the main leg), and `--hedge` (one or
+two comma-separated hedge venues). For example, to trade Lighter Robinhood
+as the primary leg and hedge with Entropy plus Lighter mainnet:
+`--primary lighter-rh --hedge entropy,lighter`.
 
 There is **no paper mode** — the bot either collects data (`--record-only`)
 or trades live. Validate with recorded data and tiny position caps, not with
@@ -88,7 +90,7 @@ simulated fills.
 **1. Collect data first** (no credentials needed):
 
 ```bash
-python3 main.py --record-only --symbol SNDK --hedge lighter-rh
+python3 main.py --record-only --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 ```
 
 Let it run for at least a few hours (a day is better — premiums have
@@ -108,7 +110,7 @@ the smallest position caps that clear the venue minimums:
 
 ```bash
 pip install -r requirements-live.txt
-python3 main.py --symbol SNDK --hedge lighter-rh
+python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 ```
 
 Running without `--record-only` sends real orders immediately once both
@@ -149,7 +151,7 @@ recent data; premiums drift, so re-run it regularly and update
 
 Strategy lives in `config.yaml` (validated — unknown keys are startup
 errors), credentials in `.env`, and the markets on the command line
-(`--symbol`, `--hedge`). Full commented reference:
+(`--symbol`, `--primary`, `--hedge`). Full commented reference:
 [config.example.yaml](config.example.yaml). The essentials:
 
 | key | meaning | default |

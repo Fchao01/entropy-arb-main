@@ -10,14 +10,14 @@
 #
 # WHICH MARKETS to trade is NOT in this file — you state it explicitly on
 # every start with command-line flags:
-#     python3 main.py --symbol SNDK --hedge lighter-rh
-# Entropy is always one leg; --hedge picks the other:
+#     python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
+# --primary selects the main leg; --hedge selects one or two other venues:
 #   lighter      Lighter mainnet            (USDC, 0 bps taker)
 #   lighter-rh   Lighter Robinhood chain    (USDG, 0 bps taker)
 #   tradexyz     Hyperliquid trade.xyz dex  (USDC, ~1 bps taker)
 # 交易哪个市场不在本文件中配置——每次启动时用命令行参数显式指定：
-#     python3 main.py --symbol SNDK --hedge lighter-rh
-# Entropy 永远是其中一条腿；--hedge 选择对冲腿（三选一，见上表）。
+#     python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
+# --primary 选择主交易腿；--hedge 选择一个或两个其它交易所作为对冲腿。
 
 # ============================ THE SIGNAL / 信号 ============================
 # premium_bps = (Entropy price / hedge price - 1) * 10000

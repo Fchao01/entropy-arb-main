@@ -2,13 +2,13 @@
 """entropy-arb entry point.
 
     # collect minute data only — no strategy, no credentials needed
-    python3 main.py --record-only --symbol SNDK --hedge lighter-rh
+    python3 main.py --record-only --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 
     # LIVE trading: real orders, real money (needs .env credentials)
-    python3 main.py --symbol SNDK --hedge lighter-rh
+    python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 
---symbol and --hedge are required on every start: the markets you trade are
-an explicit decision, not a config default. Add --cn for a Chinese-language
+--symbol, --primary and --hedge are required on every start: the markets you
+trade are an explicit decision, not a config default. Add --cn for a Chinese-language
 dashboard. There is no paper mode. Collect data with --record-only, set
 your thresholds with tools/analyze.py, then go live with small position
 caps.
@@ -27,7 +27,7 @@ import os
 import signal
 import sys
 
-from entropy_arb.config import HEDGE_VENUES, ConfigError, load_config
+from entropy_arb.config import HEDGE_VENUES, VENUES, ConfigError, load_config
 from entropy_arb.engine import Engine
 
 
@@ -57,7 +57,12 @@ async def amain(cfg, record_only: bool, use_dashboard: bool, force_tty: bool,
     eng = Engine(cfg, record_only=record_only)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, eng.request_stop)
+        try:
+            loop.add_signal_handler(sig, eng.request_stop)
+        except (NotImplementedError, RuntimeError):
+            # ProactorEventLoop on Windows does not implement asyncio signal
+            # handlers; KeyboardInterrupt still reaches asyncio.run().
+            pass
     if not use_dashboard:
         await eng.run()
         return
@@ -83,10 +88,11 @@ def main() -> None:
     p.add_argument("--symbol", required=True,
                    help="symbol traded on both venues, e.g. SNDK / "
                         "两个交易所共同交易的品种")
-    p.add_argument("--hedge", required=True, choices=HEDGE_VENUES,
-                   metavar="VENUE",
-                   help=f"hedge venue, one of: {', '.join(HEDGE_VENUES)} / "
-                        f"对冲腿，三选一")
+    p.add_argument("--hedge", required=True, metavar="VENUE[,VENUE]",
+                   help=f"one or two hedge venues: {', '.join(HEDGE_VENUES)} "
+                        f"(comma-separated) / 一个或两个对冲交易所，逗号分隔")
+    p.add_argument("--primary", default="entropy", choices=VENUES,
+                   help="primary trading venue (default: entropy) / 主交易腿")
     p.add_argument("--config", default="config.yaml",
                    help="strategy config (default: config.yaml)")
     p.add_argument("--env-file", default=".env",
@@ -105,7 +111,8 @@ def main() -> None:
 
     try:
         cfg = load_config(args.config, args.env_file,
-                          symbol=args.symbol, hedge_venue=args.hedge)
+                          symbol=args.symbol, hedge_venue=args.hedge,
+                          primary_venue=args.primary)
     except ConfigError as e:
         print(f"config error: {e}", file=sys.stderr)
         sys.exit(2)

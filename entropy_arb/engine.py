@@ -47,6 +47,7 @@ class Engine:
         self.session: Optional[aiohttp.ClientSession] = None
         self.entropy = None
         self.hedge = None
+        self.hedge_venues = []
         self.venues: Dict[str, object] = {}
         self.recorder: Optional[MinuteRecorder] = None
         self.markets_ready = False
@@ -139,9 +140,12 @@ class Engine:
     async def _run_inner(self) -> None:
         cfg = self.cfg
         self.entropy = self._make_venue(cfg.entropy)
-        self.hedge = self._make_venue(cfg.hedge)
-        self.venues = {"entropy": self.entropy, "hedge": self.hedge}
-        await asyncio.gather(self.entropy.load_market(), self.hedge.load_market())
+        hedge_confs = getattr(cfg, "hedges", (cfg.hedge,)) or (cfg.hedge,)
+        self.hedge_venues = [self._make_venue(h) for h in hedge_confs]
+        self.hedge = self.hedge_venues[0]
+        self.venues = {"entropy": self.entropy}
+        self.venues.update({v.key: v for v in self.hedge_venues})
+        await asyncio.gather(*(v.load_market() for v in self.venues.values()))
         self.markets_ready = True
 
         live = not self.record_only
@@ -153,23 +157,26 @@ class Engine:
                     "them / 实盘需要在 .env 中配置两个交易所的密钥，仅采集数据"
                     "请用 --record-only")
             self.entropy.init_signer()
-            self.hedge.init_signer()
-            if self.hedge.kind == "hl":
-                self.entropy.share_nonces_with(self.hedge)
-        if (self.hedge.kind == "hl"
-                and self.entropy._query_address()
-                and self.entropy._query_address() == self.hedge._query_address()):
-            self.hedge.include_core_equity = False  # shared account: count once
+            for v in self.hedge_venues:
+                v.init_signer()
+                if v.kind == "hl" and self.entropy.kind == "hl":
+                    self.entropy.share_nonces_with(v)
+        for v in self.hedge_venues:
+            if (v.kind == "hl" and self.entropy.kind == "hl"
+                    and self.entropy._query_address()
+                    and self.entropy._query_address() == v._query_address()):
+                v.include_core_equity = False  # shared account: count once
 
         self._step = 10 ** -min(self.entropy.size_decimals,
-                                self.hedge.size_decimals)
-        self._min_base = max(self.entropy.min_base, self.hedge.min_base,
+                                *(v.size_decimals for v in self.hedge_venues))
+        self._min_base = max(self.entropy.min_base,
+                             *(v.min_base for v in self.hedge_venues),
                              self._step)
-        self._min_notional = max(cfg.min_order_notional,
-                                 self.entropy.min_quote, self.hedge.min_quote)
-        log.info("pair ENTROPY(%s)-%s(%s): midline=%+.2fbps band=[-%.2f, +%.2f] "
+        self._min_notional = max(cfg.min_order_notional, self.entropy.min_quote,
+                                 *(v.min_quote for v in self.hedge_venues))
+        log.info("pair %s(%s)-%s(%s): midline=%+.2fbps band=[-%.2f, +%.2f] "
                  "fees=%.2f+%.2f step=%g min_ntl=$%g",
-                 self.entropy.conf.symbol, self.hedge.name,
+                 self.entropy.name, self.entropy.conf.symbol, self.hedge.name,
                  self.hedge.conf.symbol, cfg.midline_bps, cfg.lower_bps,
                  cfg.upper_bps, self.entropy.fee_bps, self.hedge.fee_bps,
                  self._step, self._min_notional)
@@ -357,8 +364,11 @@ class Engine:
         (buy, sell, plan), or None."""
         cfg = self.cfg
         best = None
-        for buy, sell, dkey in ((self.hedge, self.entropy, "sell_entropy"),
-                                (self.entropy, self.hedge, "buy_entropy")):
+        pairs = []
+        for h in self.hedge_venues or ([self.hedge] if self.hedge else []):
+            pairs.extend(((h, self.entropy, f"sell_entropy:{h.key}"),
+                          (self.entropy, h, f"buy_entropy:{h.key}")))
+        for buy, sell, dkey in pairs:
             if not (buy.book.is_fresh(cfg.staleness_sec)
                     and sell.book.is_fresh(cfg.staleness_sec)):
                 continue

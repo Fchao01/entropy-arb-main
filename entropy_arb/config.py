@@ -31,7 +31,8 @@ from dotenv import load_dotenv
 HL_API_URL = "https://api.hyperliquid.xyz"
 HL_WS_URL = "wss://api.hyperliquid.xyz/ws"   # official ws — the only HL feed used
 
-HEDGE_VENUES = ("lighter", "lighter-rh", "tradexyz")
+VENUES = ("entropy", "lighter", "lighter-rh", "tradexyz")
+HEDGE_VENUES = ("lighter", "lighter-rh", "tradexyz", "entropy")
 
 
 @dataclass(frozen=True)
@@ -97,9 +98,13 @@ class VenueConf:
 @dataclass
 class Config:
     symbol: str
+    primary_venue: str
     hedge_venue: str
     entropy: VenueConf
     hedge: VenueConf
+    # All configured hedge legs. ``hedge`` remains an alias for the first
+    # entry for backwards compatibility with the original two-venue mode.
+    hedges: tuple[VenueConf, ...]
     # thresholds (the whole signal)
     midline_bps: float
     upper_bps: float
@@ -139,7 +144,7 @@ class Config:
 
     @property
     def creds_complete(self) -> bool:
-        for v in (self.entropy, self.hedge):
+        for v in (self.entropy, *self.hedges):
             if v.kind == "hl" and not (v.hl_creds and v.hl_creds.complete):
                 return False
             if v.kind == "lighter" and not (v.lighter_creds
@@ -250,10 +255,25 @@ def _env_i(name: str) -> Optional[int]:
     return int(v) if v not in (None, "") else None
 
 
+def _lighter_creds(name: str) -> LighterCreds:
+    """Load deployment-specific Lighter credentials, falling back to the
+    legacy shared names for single-hedge configurations."""
+    prefix = "LIGHTER_RH" if name == "lighter-rh" else "LIGHTER"
+    ai = _env_i(f"{prefix}_ACCOUNT_INDEX")
+    ki = _env_i(f"{prefix}_API_KEY_INDEX")
+    pk = _env_s(f"{prefix}_API_PRIVATE_KEY")
+    return LighterCreds(
+        ai if ai is not None else _env_i("LIGHTER_ACCOUNT_INDEX"),
+        ki if ki is not None else _env_i("LIGHTER_API_KEY_INDEX"),
+        pk if pk is not None else _env_s("LIGHTER_API_PRIVATE_KEY"),
+    )
+
+
 # -------------------------------------------------------------------- loading
 
 def load_config(config_file: str = "config.yaml", env_file: str = ".env", *,
-                symbol: str, hedge_venue: str) -> Config:
+                symbol: str, hedge_venue: str,
+                primary_venue: str = "entropy") -> Config:
     load_dotenv(env_file)
     try:
         with open(config_file) as fh:
@@ -269,10 +289,24 @@ def load_config(config_file: str = "config.yaml", env_file: str = ".env", *,
     if not symbol:
         raise ConfigError("--symbol is required, e.g. --symbol SNDK / "
                           "必须用 --symbol 指定交易品种")
-    if hedge_venue not in HEDGE_VENUES:
+    # ``--hedge`` accepts one venue (legacy mode) or a comma-separated pair,
+    # e.g. ``--hedge lighter,lighter-rh``.  Two hedge venues plus Entropy make
+    # a three-venue delta-neutral strategy.
+    primary_venue = str(primary_venue).strip()
+    if primary_venue not in VENUES:
+        raise ConfigError(f"--primary must be one of {list(VENUES)}, got "
+                          f"{primary_venue!r}")
+    hedge_names = tuple(dict.fromkeys(
+        x.strip() for x in str(hedge_venue).split(",") if x.strip()))
+    if not hedge_names or any(x not in VENUES for x in hedge_names):
         raise ConfigError(
             f"--hedge must be one of {list(HEDGE_VENUES)}, got "
             f"{hedge_venue!r} / --hedge 必须是 {list(HEDGE_VENUES)} 之一")
+    if len(hedge_names) > 2:
+        raise ConfigError("at most two hedge venues may be selected (three "
+                          "venues total)")
+    if primary_venue in hedge_names:
+        raise ConfigError("--primary must not also appear in --hedge")
 
     thr = raw.get("thresholds") or {}
     for k in ("midline_bps", "upper_bps", "lower_bps"):
@@ -292,53 +326,54 @@ def load_config(config_file: str = "config.yaml", env_file: str = ".env", *,
                           "tail / 必须在 (0, 1] 之间")
 
     entropy_dex = _get(raw, "entropy", "dex", "io")
-    if hedge_venue == "tradexyz" and entropy_dex == "xyz":
+    if ((primary_venue == "tradexyz" and entropy_dex == "xyz")
+            or ("tradexyz" in hedge_names and primary_venue == "entropy"
+                and entropy_dex == "xyz")):
         raise ConfigError("entropy.dex 'xyz' with hedge_venue 'tradexyz' is "
                           "the same market on both legs / 两条腿是同一个市场")
 
-    entropy_hl_creds = HLCreds(_env_s("HL_PRIVATE_KEY"),
-                               _env_s("HL_ACCOUNT_ADDRESS"))
-    entropy = VenueConf(
-        key="entropy", kind="hl", label="ENTROPY",
-        symbol=symbol,
-        fee_bps=float(_get(raw, "entropy", "taker_fee_bps", 0.0)),
-        cap_usd=float(_get(raw, "entropy", "max_position_usd", 1000.0)),
-        orders_per_min=int(_get(raw, "entropy", "max_orders_per_min", 120)),
-        hl_dex=entropy_dex,
-        hl_creds=entropy_hl_creds,
-    )
-
-    if hedge_venue == "tradexyz":
-        hedge = VenueConf(
-            key="hedge", kind="hl", label="XYZ",
-            symbol=symbol,
-            fee_bps=float(_get(raw, "hedge", "taker_fee_bps", 1.0)),
-            cap_usd=float(_get(raw, "hedge", "max_position_usd", 1000.0)),
-            orders_per_min=int(_get(raw, "hedge", "max_orders_per_min", 120)),
-            hl_dex="xyz",
-            hl_creds=HLCreds(
-                _env_s("HL_PRIVATE_KEY_XYZ") or _env_s("HL_PRIVATE_KEY"),
-                _env_s("HL_ACCOUNT_ADDRESS_XYZ") or _env_s("HL_ACCOUNT_ADDRESS")),
-        )
-    else:
-        hedge = VenueConf(
-            key="hedge", kind="lighter",
-            label="LIGHTER" if hedge_venue == "lighter" else "RH",
+    def make_venue(name: str, key: str) -> VenueConf:
+        if name == "entropy":
+            return VenueConf(
+                key=key, kind="hl", label="ENTROPY", symbol=symbol,
+                fee_bps=float(_get(raw, "entropy", "taker_fee_bps", 0.0)),
+                cap_usd=float(_get(raw, "entropy", "max_position_usd", 1000.0)),
+                orders_per_min=int(_get(raw, "entropy", "max_orders_per_min", 120)),
+                hl_dex=entropy_dex,
+                hl_creds=HLCreds(_env_s("HL_PRIVATE_KEY"),
+                                 _env_s("HL_ACCOUNT_ADDRESS")))
+        if name == "tradexyz":
+            return VenueConf(
+                key=key, kind="hl", label="XYZ", symbol=symbol,
+                fee_bps=float(_get(raw, "hedge", "taker_fee_bps", 1.0)),
+                cap_usd=float(_get(raw, "hedge", "max_position_usd", 1000.0)),
+                orders_per_min=int(_get(raw, "hedge", "max_orders_per_min", 120)),
+                hl_dex="xyz",
+                hl_creds=HLCreds(
+                    _env_s("HL_PRIVATE_KEY_XYZ") or _env_s("HL_PRIVATE_KEY"),
+                    _env_s("HL_ACCOUNT_ADDRESS_XYZ") or _env_s("HL_ACCOUNT_ADDRESS")))
+        return VenueConf(
+            key=key, kind="lighter", label="LIGHTER" if name == "lighter" else "RH",
             symbol=symbol,
             fee_bps=float(_get(raw, "hedge", "taker_fee_bps", 0.0)),
             cap_usd=float(_get(raw, "hedge", "max_position_usd", 1000.0)),
             orders_per_min=int(_get(raw, "hedge", "max_orders_per_min", 30)),
-            lighter_profile=LIGHTER_PROFILES[hedge_venue],
-            lighter_creds=LighterCreds(_env_i("LIGHTER_ACCOUNT_INDEX"),
-                                       _env_i("LIGHTER_API_KEY_INDEX"),
-                                       _env_s("LIGHTER_API_PRIVATE_KEY")),
-        )
+            lighter_profile=LIGHTER_PROFILES[name],
+            lighter_creds=_lighter_creds(name))
+
+    entropy = make_venue(primary_venue, "entropy")
+
+    hedges = tuple(make_venue(name, "hedge" if i == 0 else f"hedge{i + 1}")
+                   for i, name in enumerate(hedge_names))
+    hedge = hedges[0]
 
     return Config(
         symbol=symbol,
+        primary_venue=primary_venue,
         hedge_venue=hedge_venue,
         entropy=entropy,
         hedge=hedge,
+        hedges=hedges,
         midline_bps=float(thr["midline_bps"]),
         upper_bps=upper,
         lower_bps=lower,
