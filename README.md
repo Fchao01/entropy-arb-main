@@ -117,13 +117,14 @@ python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 Running without `--record-only` sends real orders immediately once both
 feeds are fresh and the band is crossed.
 
-**Dashboard.** On a terminal the bot shows a live Rich dashboard: both
-books with age/spread, positions and caps, equity and session PnL, the
+**Dashboard.** On a terminal the bot shows a live Rich dashboard (Chinese by
+default): both books with age/spread, positions and caps, equity and session PnL, the
 executable premium of each direction against its full hurdle (fees and
 inventory surcharge included, ● = armed), recorder progress, the last
 executions, and a tail of the log (the full log goes to `logging.file`,
-default `logs/engine.log`). It works in `--record-only` too. Add `--cn` to
-display the dashboard in Chinese. Use `--no-dashboard` for plain console
+default `logs/engine.log`). It works in `--record-only` too. Use `--en` to
+display the dashboard in English (`--cn` remains accepted for compatibility).
+Use `--no-dashboard` for plain console
 logs (nohup/systemd — off-terminal runs fall back automatically), or set
 `logging.dashboard: false`.
 

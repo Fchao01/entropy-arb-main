@@ -8,8 +8,8 @@
     python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 
 --symbol, --primary and --hedge are required on every start: the markets you
-trade are an explicit decision, not a config default. Add --cn for a Chinese-language
-dashboard. There is no paper mode. Collect data with --record-only, set
+trade are an explicit decision, not a config default. The dashboard is shown in
+Chinese by default; use --en for English (and --cn remains accepted). There is no paper mode. Collect data with --record-only, set
 your thresholds with tools/analyze.py, then go live with small position
 caps.
 
@@ -100,8 +100,11 @@ def main() -> None:
     p.add_argument("--record-only", action="store_true",
                    help="only collect minute data, run no strategy, send no "
                         "orders (needs no credentials)")
-    p.add_argument("--cn", action="store_true",
-                   help="display the dashboard in Chinese / 仪表盘使用中文")
+    lang = p.add_mutually_exclusive_group()
+    lang.add_argument("--cn", action="store_true",
+                      help="display the dashboard in Chinese (default) / 仪表盘使用中文")
+    lang.add_argument("--en", action="store_true",
+                      help="display the dashboard in English / 仪表盘使用英文")
     disp = p.add_mutually_exclusive_group()
     disp.add_argument("--dashboard", action="store_true",
                       help="force the Rich dashboard even without a tty")
@@ -141,7 +144,7 @@ def main() -> None:
         asyncio.run(amain(cfg, record_only=args.record_only,
                           use_dashboard=use_dashboard, force_tty=force_tty,
                           log_buffer=log_buffer,
-                          lang="zh" if args.cn else "en"))
+                          lang="en" if args.en else "zh"))
     except RuntimeError as e:
         # startup failures (missing credentials, market not found, venue
         # unreachable) — a clean message, not a traceback

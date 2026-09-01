@@ -114,7 +114,8 @@ python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 持仓与上限、账户权益与本次会话盈亏、两个方向的可成交溢价对比完整门槛
 （已含手续费与库存加价，● 表示已武装）、数据采集进度、最近成交，以及日志
 尾部（完整日志写入 `logging.file`，默认 `logs/engine.log`）。`--record-only`
-模式同样可用。加 `--cn` 参数可使仪表盘全部以中文显示。`--no-dashboard`
+模式同样可用，仪表盘默认使用中文；如需英文可加 `--en`（`--cn` 仍兼容）。
+`--no-dashboard`
 可切换为纯日志输出（nohup/systemd 等非终端环境会自动退回纯日志），也可
 设置 `logging.dashboard: false`。
 

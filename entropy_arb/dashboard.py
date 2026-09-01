@@ -1,4 +1,4 @@
-"""Rich terminal dashboard (English by default, Chinese with --cn).
+"""Rich terminal dashboard (Chinese by default, English with --en).
 
 While the bot runs on a terminal, log lines go to logging.file (and the
 events panel); the screen shows live state: both venues with equity, the
@@ -101,6 +101,16 @@ _ZH = {
     " — full log: {f}": " —— 完整日志：{f}",
 }
 
+_ZH_STATUS = {
+    "filled": "已成交",
+    "canceled": "已撤单",
+    "cancelled": "已撤单",
+    "send-failed": "发送失败",
+    "sent-unconfirmed": "已发送未确认",
+    "timeout": "超时",
+    "resting?": "挂单中",
+}
+
 
 class BufferLogHandler(logging.Handler):
     """Ring buffer of recent log lines for the events panel."""
@@ -147,6 +157,21 @@ class Dashboard:
         if self.lang == "zh":
             s = _ZH.get(s, s)
         return s.format(**kw) if kw else s
+
+    def _trade_direction(self, direction: str) -> str:
+        """Translate internal direction identifiers in the Chinese UI."""
+        if self.lang != "zh":
+            return direction
+        name = getattr(getattr(self.eng, "entropy", None), "name", "entropy")
+        return {"sell_entropy": f"卖出 {name}",
+                "buy_entropy": f"买入 {name}"}.get(direction, direction)
+
+    def _trade_status(self, status: str) -> str:
+        """Translate venue status values while preserving compound statuses."""
+        if self.lang != "zh":
+            return status
+        return "/".join(_ZH_STATUS.get(part, part)
+                        for part in str(status).split("/"))
 
     async def run(self) -> None:
         eng = self.eng
@@ -383,10 +408,11 @@ class Dashboard:
         for r in reversed(rows):
             style = "green" if r["ok"] else "bold red"
             t.add_row(time.strftime("%H:%M:%S", time.localtime(r["ts"])),
-                      r["direction"], f"{r['qty']:.6g}",
+                      self._trade_direction(r["direction"]),
+                      f"{r['qty']:.6g}",
                       f"${r['notional']:,.0f}", f"{r['prem_bps']:+.1f}",
                       _usd(r["exp"]), _usd(r["fill"]),
-                      Text(r["status"], style=style))
+                      Text(self._trade_status(r["status"]), style=style))
         if not rows:
             t.add_row(Text(self._t("no executions yet"), style="dim"),
                       "", "", "", "", "", "", "")
