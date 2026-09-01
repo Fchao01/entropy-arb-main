@@ -20,8 +20,10 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import re
 import sys
 import time
+from datetime import datetime, timezone, timedelta
 
 CANDIDATES = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0, 20.0]
 
@@ -38,12 +40,17 @@ def pctl(sorted_vals: list, q: float) -> float:
     return sorted_vals[lo] * (hi - k) + sorted_vals[hi] * (k - lo)
 
 
-def load_rows(path: str, hours: float, min_samples: int) -> list:
+def load_rows(path: str, hours: float, min_samples: int, date: str = "") -> list:
     cutoff = time.time() - hours * 3600 if hours > 0 else 0.0
     rows = []
     with open(path, newline="") as fh:
         for r in csv.DictReader(fh):
             try:
+                if date:
+                    day = datetime.fromtimestamp(float(r["minute_ts"]),
+                                                 tz=timezone.utc).date().isoformat()
+                    if day != date:
+                        continue
                 if float(r["minute_ts"]) < cutoff:
                     continue
                 if int(r["samples"]) < min_samples:
@@ -68,6 +75,11 @@ def main() -> None:
                    help="only use the last N hours (0 = all data)")
     p.add_argument("--min-samples", type=int, default=10,
                    help="skip minutes with fewer fresh samples than this")
+    p.add_argument("--date", default="",
+                   help="analyze this UTC date (YYYY-MM-DD), e.g. yesterday")
+    p.add_argument("--update-config", default="",
+                   metavar="YAML",
+                   help="update thresholds in this YAML with the suggestion")
     p.add_argument("--fees-bps", type=float, default=0.0,
                    help="SUM of both venues' taker fees in bps (each crossing "
                         "pays both legs); recorded edges are pre-fee, so this "
@@ -76,7 +88,15 @@ def main() -> None:
     args = p.parse_args()
 
     try:
-        rows = load_rows(args.csv, args.hours, args.min_samples)
+        date = args.date
+        if date == "yesterday":
+            date = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+        if date:
+            try:
+                datetime.strptime(date, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError("--date must be YYYY-MM-DD or yesterday")
+        rows = load_rows(args.csv, args.hours, args.min_samples, date)
     except FileNotFoundError:
         print(f"{args.csv} not found — run the bot (even --record-only) to "
               f"collect data first / 未找到数据文件，请先运行机器人采集数据",
@@ -87,6 +107,10 @@ def main() -> None:
               f"least a few hours before trusting the numbers / 数据太少，"
               f"建议至少采集数小时", file=sys.stderr)
         if not rows:
+            sys.exit(1)
+        if args.update_config:
+            print("refusing to update config: fewer than 30 usable minutes",
+                  file=sys.stderr)
             sys.exit(1)
 
     span_h = (rows[-1]["ts"] - rows[0]["ts"]) / 3600.0 + 1 / 60.0
@@ -145,6 +169,25 @@ thresholds:
 Re-run with --hours to focus on recent regimes; premiums drift, so refresh
 these numbers regularly. / 溢价中枢会漂移，请定期重新分析并更新配置。
 """)
+
+    if args.update_config:
+        path = args.update_config
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        replacements = {
+            "midline_bps": midline,
+            "upper_bps": sug_upper,
+            "lower_bps": sug_lower,
+        }
+        for key, value in replacements.items():
+            pat = rf"(^\s*{re.escape(key)}\s*:\s*)[^#\r\n]+"
+            text, n = re.subn(pat, rf"\g<1>{value}", text,
+                              count=1, flags=re.MULTILINE)
+            if n != 1:
+                raise ValueError(f"could not find thresholds.{key} in {path}")
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        print(f"updated thresholds in {path}")
 
 
 if __name__ == "__main__":
