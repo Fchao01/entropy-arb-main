@@ -36,7 +36,10 @@ CSV_HEADER = ["ts", "direction", "buy_venue", "sell_venue", "qty",
               "buy_limit", "sell_limit", "buy_notional", "sell_notional",
               "exp_edge_usd", "gross_edge_usd", "marginal_premium_bps",
               "midline_bps", "inv_add_bps", "ok", "buy_fill", "sell_fill",
-              "buy_status", "sell_status", "fill_edge_usd"]
+              "buy_status", "sell_status", "fill_edge_usd",
+              "buy_avg_px", "sell_avg_px", "buy_send_ts", "sell_send_ts",
+              "buy_settle_ts", "sell_settle_ts", "buy_slippage_bps",
+              "sell_slippage_bps"]
 BALANCE_POLL_SEC = 30.0
 
 
@@ -436,12 +439,21 @@ class Engine:
         slip = cfg.leg_slippage_bps / 1e4
         buy_bound = buy.px_round(plan.buy_limit * (1 + slip), round_up=False)
         sell_bound = sell.px_round(plan.sell_limit * (1 - slip), round_up=True)
-        self._record_send(buy)
-        self._record_send(sell)
+        async def timed_send(v, *, is_buy, limit_px):
+            send_ts = time.time()
+            self._record_send(v)
+            try:
+                info = await v.send_taker(is_buy=is_buy, qty=plan.qty,
+                                           limit_px=limit_px)
+            except Exception as e:
+                info = {"status": "send-failed", "filled_base": 0.0,
+                        "avg_px": None, "err": repr(e), "unresolved": False}
+            info["send_ts"] = send_ts
+            info["settle_ts"] = time.time()
+            return info
         res = await asyncio.gather(
-            buy.send_taker(is_buy=True, qty=plan.qty, limit_px=buy_bound),
-            sell.send_taker(is_buy=False, qty=plan.qty, limit_px=sell_bound),
-            return_exceptions=True)
+            timed_send(buy, is_buy=True, limit_px=buy_bound),
+            timed_send(sell, is_buy=False, limit_px=sell_bound))
         binfo, sinfo = (r if isinstance(r, dict) else
                         {"status": "send-failed", "filled_base": 0.0,
                          "avg_px": None, "err": repr(r), "unresolved": False}
@@ -503,7 +515,8 @@ class Engine:
                            None if unresolved else fill_edge,
                            f"{binfo['status']}/{sinfo['status']}", sent_ok)
         self._log_csv(direction, buy, sell, plan, sent_ok, bfill, sfill,
-                      binfo["status"], sinfo["status"], fill_edge, inv_bps)
+                      binfo["status"], sinfo["status"], fill_edge, inv_bps,
+                      binfo, sinfo)
         self.last_trade_ts = time.time()
         return bool(unresolved)
 
@@ -760,7 +773,8 @@ class Engine:
                      " *** HALTED ***" if self.halted else "")
 
     def _log_csv(self, direction, buy, sell, plan: ArbPlan, ok: bool, bfill,
-                 sfill, bstatus, sstatus, fill_edge, inv_bps) -> None:
+                 sfill, bstatus, sstatus, fill_edge, inv_bps,
+                 binfo=None, sinfo=None) -> None:
         try:
             path = self.cfg.trades_csv
             d = os.path.dirname(path)
@@ -775,6 +789,12 @@ class Engine:
                 w = csv.writer(fh)
                 if new:
                     w.writerow(CSV_HEADER)
+                binfo, sinfo = binfo or {}, sinfo or {}
+                bpx, spx = binfo.get("avg_px"), sinfo.get("avg_px")
+                bslip = ((bpx / plan.buy_limit - 1.0) * 1e4
+                         if bpx and plan.buy_limit else None)
+                sslip = ((1.0 - spx / plan.sell_limit) * 1e4
+                         if spx and plan.sell_limit else None)
                 w.writerow([f"{time.time():.3f}",
                             direction, buy.name, sell.name, f"{plan.qty:.8g}",
                             plan.buy_limit, plan.sell_limit,
@@ -783,6 +803,14 @@ class Engine:
                             f"{plan.marginal_premium_bps:.3f}",
                             f"{self.cfg.midline_bps:.3f}",
                             f"{inv_bps:.3f}", int(ok), f"{bfill:.8g}",
-                            f"{sfill:.8g}", bstatus, sstatus, f"{fill_edge:.4f}"])
+                            f"{sfill:.8g}", bstatus, sstatus, f"{fill_edge:.4f}",
+                            f"{bpx:.8g}" if bpx else "",
+                            f"{spx:.8g}" if spx else "",
+                            f"{binfo.get('send_ts', 0):.3f}" if binfo.get("send_ts") else "",
+                            f"{sinfo.get('send_ts', 0):.3f}" if sinfo.get("send_ts") else "",
+                            f"{binfo.get('settle_ts', 0):.3f}" if binfo.get("settle_ts") else "",
+                            f"{sinfo.get('settle_ts', 0):.3f}" if sinfo.get("settle_ts") else "",
+                            f"{bslip:.3f}" if bslip is not None else "",
+                            f"{sslip:.3f}" if sslip is not None else ""])
         except Exception:
             log.exception("csv write failed")
