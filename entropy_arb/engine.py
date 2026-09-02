@@ -39,7 +39,8 @@ CSV_HEADER = ["ts", "direction", "buy_venue", "sell_venue", "qty",
               "buy_status", "sell_status", "fill_edge_usd",
               "buy_avg_px", "sell_avg_px", "buy_send_ts", "sell_send_ts",
               "buy_settle_ts", "sell_settle_ts", "buy_slippage_bps",
-              "sell_slippage_bps"]
+              "sell_slippage_bps", "buy_book_age_ms", "sell_book_age_ms",
+              "send_skew_ms", "buy_latency_ms", "sell_latency_ms"]
 BALANCE_POLL_SEC = 30.0
 
 
@@ -428,6 +429,7 @@ class Engine:
         if self.halted:
             return False
         cfg = self.cfg
+        signal_ts = time.time()
         inv_bps = self._inv_add_bps(buy, sell)
         direction = "sell_entropy" if sell.key == "entropy" else "buy_entropy"
         self.last_trade_ts = time.time()
@@ -516,7 +518,7 @@ class Engine:
                            f"{binfo['status']}/{sinfo['status']}", sent_ok)
         self._log_csv(direction, buy, sell, plan, sent_ok, bfill, sfill,
                       binfo["status"], sinfo["status"], fill_edge, inv_bps,
-                      binfo, sinfo)
+                      binfo, sinfo, signal_ts)
         self.last_trade_ts = time.time()
         return bool(unresolved)
 
@@ -774,7 +776,7 @@ class Engine:
 
     def _log_csv(self, direction, buy, sell, plan: ArbPlan, ok: bool, bfill,
                  sfill, bstatus, sstatus, fill_edge, inv_bps,
-                 binfo=None, sinfo=None) -> None:
+                 binfo=None, sinfo=None, signal_ts=None) -> None:
         try:
             path = self.cfg.trades_csv
             d = os.path.dirname(path)
@@ -795,6 +797,14 @@ class Engine:
                          if bpx and plan.buy_limit else None)
                 sslip = ((1.0 - spx / plan.sell_limit) * 1e4
                          if spx and plan.sell_limit else None)
+                signal_ts = signal_ts or time.time()
+                bage = max(0.0, signal_ts - buy.book.last_update_ts) * 1000
+                sage = max(0.0, signal_ts - sell.book.last_update_ts) * 1000
+                bsend, ssend = binfo.get("send_ts"), sinfo.get("send_ts")
+                bsettle, ssettle = binfo.get("settle_ts"), sinfo.get("settle_ts")
+                skew = abs(bsend - ssend) * 1000 if bsend and ssend else None
+                blat = (bsettle - bsend) * 1000 if bsettle and bsend else None
+                slat = (ssettle - ssend) * 1000 if ssettle and ssend else None
                 w.writerow([f"{time.time():.3f}",
                             direction, buy.name, sell.name, f"{plan.qty:.8g}",
                             plan.buy_limit, plan.sell_limit,
@@ -811,6 +821,10 @@ class Engine:
                             f"{binfo.get('settle_ts', 0):.3f}" if binfo.get("settle_ts") else "",
                             f"{sinfo.get('settle_ts', 0):.3f}" if sinfo.get("settle_ts") else "",
                             f"{bslip:.3f}" if bslip is not None else "",
-                            f"{sslip:.3f}" if sslip is not None else ""])
+                            f"{sslip:.3f}" if sslip is not None else "",
+                            f"{bage:.1f}", f"{sage:.1f}",
+                            f"{skew:.1f}" if skew is not None else "",
+                            f"{blat:.1f}" if blat is not None else "",
+                            f"{slat:.1f}" if slat is not None else ""])
         except Exception:
             log.exception("csv write failed")

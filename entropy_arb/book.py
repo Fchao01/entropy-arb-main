@@ -19,6 +19,11 @@ class OrderBook:
     def __init__(self) -> None:
         self.bids: Dict[float, float] = {}
         self.asks: Dict[float, float] = {}
+        # Sorting the full Lighter book (often thousands of levels) on every
+        # strategy wake-up is needlessly expensive. Caches are invalidated on
+        # each snapshot/diff and reused by plan_arb between updates.
+        self._bids_sorted: Optional[List[Level]] = None
+        self._asks_sorted: Optional[List[Level]] = None
         self.ready = False
         self.last_update_ts = 0.0
         self.alive_ts = 0.0
@@ -29,6 +34,7 @@ class OrderBook:
     def clear(self) -> None:
         self.bids.clear()
         self.asks.clear()
+        self._bids_sorted = self._asks_sorted = None
         self.ready = False
 
     # ---- zkLighter snapshot + diff ----
@@ -44,6 +50,7 @@ class OrderBook:
                 else:
                     side[px] = sz
         self.ready = True
+        self._bids_sorted = self._asks_sorted = None
         self.last_update_ts = time.time()
         self.touch()
 
@@ -53,15 +60,20 @@ class OrderBook:
                      for l in levels[0] if float(l["sz"]) > 0}
         self.asks = {float(l["px"]): float(l["sz"])
                      for l in levels[1] if float(l["sz"]) > 0}
+        self._bids_sorted = self._asks_sorted = None
         self.ready = True
         self.last_update_ts = time.time()
         self.touch()
 
     def sorted_bids(self) -> List[Level]:
-        return sorted(self.bids.items(), key=lambda kv: -kv[0])
+        if self._bids_sorted is None:
+            self._bids_sorted = sorted(self.bids.items(), key=lambda kv: -kv[0])
+        return self._bids_sorted
 
     def sorted_asks(self) -> List[Level]:
-        return sorted(self.asks.items())
+        if self._asks_sorted is None:
+            self._asks_sorted = sorted(self.asks.items())
+        return self._asks_sorted
 
     def best_bid(self) -> Optional[float]:
         return max(self.bids) if self.bids else None

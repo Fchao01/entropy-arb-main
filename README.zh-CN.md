@@ -133,6 +133,10 @@ python3 main.py --symbol SNDK --primary lighter-rh --hedge entropy,lighter
 | `buy_edge_mean/max_bps` | 买入 Entropy 方向的可成交溢价（对冲腿买一 / Entropy 卖一 − 1） |
 | `samples` | 该分钟约 60 秒中两边盘口同时有效的秒数 |
 
+成交记录 `logs/trades_{symbol}.csv` 还会记录每条腿的实际均价、发送/结算
+时间戳、每腿滑点、信号时订单簿数据龄以及两腿发送时间差，用于区分行情陈旧、
+网络/撮合延迟和价格冲击。
+
 采集的 edge 为费前口径；分析工具在统计触发频率前会先扣除 `--fees-bps`
 （请传入**两边吃单费之和**——零费交易所默认 0.0，对冲腿为 `tradexyz` 时
 约为 1.0），因此其表格与建议值可直接填入配置。`--hours 24`
