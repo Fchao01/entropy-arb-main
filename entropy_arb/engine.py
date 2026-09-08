@@ -65,7 +65,6 @@ class Engine:
         self.halted = False
         self.consec_errors = 0
         self.last_trade_ts = 0.0
-        self.last_trade_dir = ""
         self.trades = 0
         self.hedges = 0
         self.total_exp_edge = 0.0
@@ -258,23 +257,6 @@ class Engine:
 
         return max(ramp(buy, buy.position >= 0), ramp(sell, sell.position <= 0))
 
-    def _dir_key(self, buy, sell) -> str:
-        return "sell_entropy" if sell.key == "entropy" else "buy_entropy"
-
-    def _same_dir_add_bps(self, buy, sell) -> float:
-        """Extra hurdle after a same-direction fill so we do not machine-gun
-        a one-tick spike that is already decaying."""
-        gap = self.cfg.same_dir_cooldown_sec
-        if gap <= 0 or not self.last_trade_dir:
-            return 0.0
-        if self._dir_key(buy, sell) != self.last_trade_dir:
-            return 0.0
-        age = time.time() - self.last_trade_ts
-        if age >= gap:
-            return 0.0
-        # linearly decay the extra 4 bps over the cooldown window
-        return 4.0 * (1.0 - age / gap)
-
     def _eff_threshold(self, buy, sell) -> float:
         """Net hurdle (bps, on top of fees) for the direction buy->sell.
 
@@ -284,22 +266,7 @@ class Engine:
             base = self.cfg.midline_bps + self.cfg.upper_bps
         else:
             base = self.cfg.lower_bps - self.cfg.midline_bps
-        return base + self._inv_add_bps(buy, sell) + self._same_dir_add_bps(buy, sell)
-
-    def _leg_slip_bps(self, plan: ArbPlan) -> float:
-        """Cap taker protection at a fraction of the live edge.
-
-        A fixed 50 bps bound lets the fill happen after the spike has
-        already reverted.  slip_frac=0 disables the cap and uses
-        leg_slippage_bps as a hard ceiling only."""
-        hard = max(self.cfg.leg_slippage_bps, 0.0)
-        floor = max(self.cfg.min_leg_slippage_bps, 0.0)
-        frac = self.cfg.slip_frac
-        if frac <= 0:
-            return hard
-        # use top-of-book edge (what we saw), not the deeper marginal print
-        edge = max(abs(plan.top_premium_bps), abs(plan.marginal_premium_bps), 0.0)
-        return min(hard, max(floor, frac * edge))
+        return base + self._inv_add_bps(buy, sell)
 
     def _headroom(self, buy, sell, ref_px: float) -> float:
         hb = buy.cap_usd - buy.position * ref_px
@@ -463,29 +430,15 @@ class Engine:
             return False
         cfg = self.cfg
         signal_ts = time.time()
-        if cfg.requote_before_send:
-            # Books can move in the persist/lock window. Re-size against the
-            # live book; abort if the edge is already gone instead of sending
-            # a stale 50 bps-wide taker.
-            cap = min(cfg.max_order_notional,
-                      max(self._headroom(buy, sell, plan.buy_limit), 0.0))
-            fresh, reason = self._plan(buy, sell, cap if cap > 0 else cfg.max_order_notional)
-            if fresh is None:
-                log.info("[SKIP] edge gone before send (%s) prem was %.2fbps",
-                         reason, plan.marginal_premium_bps)
-                return False
-            plan = fresh
         inv_bps = self._inv_add_bps(buy, sell)
         direction = "sell_entropy" if sell.key == "entropy" else "buy_entropy"
         self.last_trade_ts = time.time()
-        self.last_trade_dir = direction
-        slip_bps = self._leg_slip_bps(plan)
         log.info("[ARB] %s: BUY %s %.6g @<=%.6g | SELL %s @>=%.6g | "
-                 "take $%.0f of $%.0f | prem %.2fbps | slip %.1fbps | exp $%.4f",
+                 "take $%.0f of $%.0f | prem %.2fbps | exp $%.4f",
                  direction, buy.name, plan.qty, plan.buy_limit, sell.name,
                  plan.sell_limit, plan.buy_notional, plan.q_max_notional,
-                 plan.marginal_premium_bps, slip_bps, plan.exp_edge_usd)
-        slip = slip_bps / 1e4
+                 plan.marginal_premium_bps, plan.exp_edge_usd)
+        slip = cfg.leg_slippage_bps / 1e4
         buy_bound = buy.px_round(plan.buy_limit * (1 + slip), round_up=False)
         sell_bound = sell.px_round(plan.sell_limit * (1 - slip), round_up=True)
         async def timed_send(v, *, is_buy, limit_px):
