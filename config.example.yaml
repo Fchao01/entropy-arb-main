@@ -70,11 +70,17 @@ inventory:
 
 # ======================= EXECUTION / 执行参数 ==============================
 execution:
-  premium_persist_sec: 0     # edge must persist this long before firing / 信号需持续时间
-  cooldown_sec: 0.0            # min gap between executions / 两次执行的最小间隔
+  premium_persist_sec: 0.15    # edge must persist this long before firing / 信号需持续时间
+  cooldown_sec: 0.2            # min gap between executions / 两次执行的最小间隔
   settle_timeout_sec: 10.0      # wait for fill confirmation / 等待成交确认
-  leg_slippage_bps: 50.0       # taker limit protection per leg / 每腿滑点保护
-  hedge_slippage_bps: 20.0     # price protection on delta hedges / 对冲滑点保护
+  # Actual open slip = clamp(slip_frac * live_edge, min_leg_slippage_bps, leg_slippage_bps)
+  # 实际开仓滑点上限跟信号走，避免 6bps 脉冲用 50bps 保护把回归价吃掉。
+  leg_slippage_bps: 12.0       # max taker protection per open / 开仓滑点上限
+  min_leg_slippage_bps: 3.0    # floor so tiny ticks can still fill / 下限
+  slip_frac: 0.4               # fraction of live edge used as slip cap / 用信号溢价的比例做保护
+  same_dir_cooldown_sec: 0.6   # extra hurdle after same-direction fill / 同向连打加价窗口
+  requote_before_send: true    # re-plan on live books; skip if edge gone / 发单前用新盘口重算
+  hedge_slippage_bps: 10.0     # price protection on delta hedges / 对冲滑点保护
   net_tolerance_base: 0.001    # max tolerated net delta (base units) / 允许的净敞口
   max_consecutive_errors: 3    # halt after N straight failures / 连续失败 N 次后停机
   rate_limit_pause_sec: 10.0   # pause a 429'd venue this long / 被限频后的暂停时长
