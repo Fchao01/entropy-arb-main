@@ -96,6 +96,8 @@ class Engine:
         self.strategy_updated_at = 0.0
         self.strategy_update_error = ""
         self.strategy_next_update = 0.0
+        self.strategy_values = (cfg.midline_bps, cfg.upper_bps, cfg.lower_bps)
+        self.strategy_previous_values = None
 
     # ------------------------------------------------------------- utilities
 
@@ -282,10 +284,16 @@ class Engine:
                                   symbol=self.cfg.symbol,
                                   hedge_venue=self.cfg.hedge_venue,
                                   primary_venue=self.cfg.primary_venue)
+                self.strategy_previous_values = (
+                    self.cfg.midline_bps, self.cfg.upper_bps,
+                    self.cfg.lower_bps)
                 self.cfg.midline_bps = new.midline_bps
                 self.cfg.upper_bps = new.upper_bps
                 self.cfg.lower_bps = new.lower_bps
                 self.cfg.max_order_notional = new.max_order_notional
+                self.strategy_values = (
+                    self.cfg.midline_bps, self.cfg.upper_bps,
+                    self.cfg.lower_bps)
                 self.strategy_period = period
                 self.strategy_updated_at = time.time()
                 self.strategy_update_status = "updated"

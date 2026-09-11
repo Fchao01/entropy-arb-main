@@ -119,9 +119,13 @@ def test_renders_four_hour_strategy_status():
     eng.strategy_period = "2026-09-11 08:00–2026-09-11 12:00"
     eng.strategy_updated_at = time.mktime((2026, 9, 11, 12, 0, 5, 0, 0, -1))
     eng.strategy_next_update = time.mktime((2026, 9, 11, 16, 0, 0, 0, 0, -1))
+    eng.strategy_previous_values = (-3.0, 4.0, 5.0)
+    eng.strategy_values = (-4.0, 6.0, 5.5)
     out = render(eng, lang="zh")
     for needle in ("策略更新", "已更新", "策略配置", "策略数据时段", "08:00", "12:00",
-                   "生效时间", "下次更新", "16:00"):
+                   "生效时间", "下次更新", "16:00", "参数新旧对比",
+                   "midline_bps", "-3.00 → -4.00", "upper_bps",
+                   "+4.00 → +6.00", "lower_bps", "+5.00 → +5.50"):
         assert needle in out
     # numbers unchanged by translation: sell hurdle midline+upper = +6
     assert "+6.00" in out

@@ -77,6 +77,7 @@ _ZH = {
     "strategy config": "策略配置",
     "updated at": "生效时间",
     "next update": "下次更新",
+    "threshold comparison": "参数新旧对比",
     "{s}s ago": "{s} 秒前",
     "signal — executable premium vs full hurdle incl. fees (● = armed)":
         "信号 —— 可成交溢价 vs 完整门槛（含手续费，● = 已武装）",
@@ -356,6 +357,24 @@ class Dashboard:
             nxt = getattr(eng, "strategy_next_update", 0)
             g.add_row(self._t("next update"), Text(
                 time.strftime("%m-%d %H:%M", time.localtime(nxt)) if nxt else "—"))
+        current = getattr(eng, "strategy_values",
+                          (cfg.midline_bps, cfg.upper_bps, cfg.lower_bps))
+        previous = getattr(eng, "strategy_previous_values", None)
+        comparison = Text()
+        for i, (name, value) in enumerate(zip(
+                ("midline_bps", "upper_bps", "lower_bps"), current)):
+            if i:
+                comparison.append("\n")
+            comparison.append(f"{name}: ", style="dim")
+            if previous is None:
+                comparison.append(f"— → {value:+.2f}", style="cyan")
+            else:
+                delta = value - previous[i]
+                comparison.append(f"{previous[i]:+.2f} → {value:+.2f} ")
+                comparison.append(f"({delta:+.2f})",
+                                  style="green" if delta > 0 else (
+                                      "red" if delta < 0 else "dim"))
+        g.add_row(self._t("threshold comparison"), comparison)
         return Panel(g, title=self._t("session"), box=box.ROUNDED,
                      padding=(0, 1))
 
