@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections import deque
 from typing import Optional
@@ -71,6 +72,11 @@ _ZH = {
     "errors": "连续错误",
     "last exec": "上次执行",
     "minute rows": "分钟数据行数",
+    "strategy update": "策略更新",
+    "strategy period": "策略数据时段",
+    "strategy config": "策略配置",
+    "updated at": "生效时间",
+    "next update": "下次更新",
     "{s}s ago": "{s} 秒前",
     "signal — executable premium vs full hurdle incl. fees (● = armed)":
         "信号 —— 可成交溢价 vs 完整门槛（含手续费，● = 已武装）",
@@ -328,6 +334,28 @@ class Dashboard:
         if eng.recorder is not None:
             g.add_row(self._t("minute rows"),
                       Text(str(eng.recorder.rows_written), style="dim"))
+        status = getattr(eng, "strategy_update_status", "disabled")
+        status_zh = {"disabled": "未启用", "waiting": "等待更新",
+                     "updating": "更新中", "updated": "已更新",
+                     "failed": "更新失败"}
+        shown = status_zh.get(status, status) if self.lang == "zh" else status.upper()
+        style = "bold green" if status == "updated" else (
+            "bold red" if status == "failed" else "yellow")
+        g.add_row(self._t("strategy update"), Text(shown, style=style))
+        if status != "disabled":
+            g.add_row(self._t("strategy config"), Text(
+                os.path.basename(getattr(cfg, "config_file", "")) or "—",
+                style="bold cyan"))
+            period = getattr(eng, "strategy_period", "—")
+            if status == "failed" and getattr(eng, "strategy_update_error", ""):
+                period += " · " + eng.strategy_update_error
+            g.add_row(self._t("strategy period"), Text(period, style="dim"))
+            updated = getattr(eng, "strategy_updated_at", 0)
+            g.add_row(self._t("updated at"), Text(
+                time.strftime("%m-%d %H:%M:%S", time.localtime(updated)) if updated else "—"))
+            nxt = getattr(eng, "strategy_next_update", 0)
+            g.add_row(self._t("next update"), Text(
+                time.strftime("%m-%d %H:%M", time.localtime(nxt)) if nxt else "—"))
         return Panel(g, title=self._t("session"), box=box.ROUNDED,
                      padding=(0, 1))
 

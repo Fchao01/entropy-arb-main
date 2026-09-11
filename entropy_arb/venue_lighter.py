@@ -200,7 +200,7 @@ class LighterVenue:
         raise RuntimeError(f"[{self.name}] {self.conf.symbol} not found on "
                            f"{self.profile.name}")
 
-    def init_signer(self) -> None:
+    def init_signer(self, *, validate: bool = True) -> None:
         c = self.conf.lighter_creds
         assert c is not None and c.complete, f"[{self.name}] missing credentials"
         try:
@@ -211,16 +211,19 @@ class LighterVenue:
                 "pip install -r requirements-live.txt "
                 "(git+https://github.com/elliottech/lighter-python.git)") from e
         signer = SignerClient(
-            url=self.profile.api_url,
+            url=getattr(self, "signer_api_url", self.profile.api_url),
             account_index=c.account_index,
             api_private_keys={c.api_key_index: c.api_private_key},
             chain_id=self.profile.chain_id,
         )
-        err = signer.check_client()
-        if err is not None:
-            raise RuntimeError(f"[{self.name}] API key check failed: {err}")
+        # Keep ownership even when validation fails so close() can release
+        # the SDK's internal aiohttp session.
         self.signer = signer
-        log.info("[%s] signer ready (account %d)", self.name, c.account_index)
+        if validate:
+            err = signer.check_client()
+            if err is not None:
+                raise RuntimeError(f"[{self.name}] API key check failed: {err}")
+            log.info("[%s] signer ready (account %d)", self.name, c.account_index)
 
     def start_tasks(self, stop: asyncio.Event, notify, live: bool) -> list:
         tasks = [asyncio.create_task(

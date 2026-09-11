@@ -36,20 +36,20 @@
 # 两个方向的门槛都已扣除手续费（引擎会在此之上另加手续费），因此一次完整往返
 # 扣费后净赚 >= upper + lower bps。
 thresholds:
-  midline_bps: 0.0     # persistent premium center / 溢价长期中枢
-  upper_bps: 4.0       # entry above midline: sell entropy / 中枢上方入场带宽
-  lower_bps: 4.0       # entry below midline: buy entropy / 中枢下方入场带宽
+  midline_bps: -4.8
+  upper_bps: 3.0
+  lower_bps: 3.5     # entry below midline: buy primary / 中枢下方入场带宽
 
 # ======================== VENUES / 交易所参数 ==============================
 entropy:
   dex: io                    # Entropy's dex name on Hyperliquid / Entropy 的 dex 名
   taker_fee_bps: 0.0         # taker fee / 吃单手续费
-  max_position_usd: 1000     # position cap / 持仓上限（美元）
+  max_position_usd: 2000     # position cap / 持仓上限（美元）
   max_orders_per_min: 120    # order-send budget, sliding 60s / 每分钟下单预算
 
 hedge:
   taker_fee_bps: 0.0         # Lighter venues: 0; tradexyz: ~1.0
-  max_position_usd: 1000
+  max_position_usd: 2000
   max_orders_per_min: 30     # Lighter's ceiling is ~40/min / Lighter 上限约 40/分钟
 
 # ========================= SIZING / 下单规模 ===============================
@@ -92,6 +92,36 @@ recorder:
   enabled: true
   # {symbol} is replaced by --symbol, so BTC/ETH/SNDK get separate files.
   csv: logs/minutes_{symbol}.csv
+
+# ====================== OFFLINE ANALYSIS / 离线分析 =========================
+# `python3 tools/analyze.py --config config.yaml` reads these values and writes
+# the final thresholds and sizing recommendation back into the same YAML.
+analysis:
+  # Split recorder data at local 4-hour boundaries, analyze the completed
+  # period, update this YAML, then hot-load the new strategy into the bot.
+  auto_update: false
+  interval_hours: 4
+  symbol: XAU
+  proxy: http://127.0.0.1:7897
+  ws_port: 8766
+  rest_port: 8767
+  staleness_sec: 10.0
+  csv: logs/minutes_variational_rh_XAU.csv
+  threshold_buffer_bps: 2.0
+  fees_bps: 0.0
+  hours: 24.0
+  min_samples: 10
+  max_order_cap_usd: 100.0
+
+# =============== VARIATIONAL + RH AUTOMATION / 自动交易 ==================
+# Dry-run never clicks the final submit button. Live mode additionally needs
+# --live and the extension's separate “实盘” arm switch.
+variational_auto:
+  command_port: 8768
+  signal_persist_sec: 1.0
+  cooldown_sec: 10.0
+  fill_timeout_sec: 20.0
+  max_trades_per_session: 2
 
 # ==================== LOGGING & DASHBOARD / 日志与仪表盘 ====================
 # On a terminal the bot shows a live Rich dashboard (books, signal, positions,

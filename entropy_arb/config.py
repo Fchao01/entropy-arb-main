@@ -97,6 +97,8 @@ class VenueConf:
 
 @dataclass
 class Config:
+    config_file: str
+    env_file: str
     symbol: str
     primary_venue: str
     hedge_venue: str
@@ -132,6 +134,9 @@ class Config:
     # recorder
     recorder_enabled: bool
     recorder_csv: str
+    analysis_auto_update: bool
+    analysis_interval_hours: int
+    analysis_threshold_buffer_bps: float
     # logging
     log_level: str
     status_interval_sec: float
@@ -206,6 +211,28 @@ _SCHEMA: Dict[str, Any] = {
         "trades_csv": str,
         "dashboard": bool,
         "file": str,
+    },
+    "analysis": {
+        "symbol": str,
+        "proxy": str,
+        "ws_port": int,
+        "rest_port": int,
+        "staleness_sec": float,
+        "csv": str,
+        "threshold_buffer_bps": float,
+        "fees_bps": float,
+        "hours": float,
+        "min_samples": int,
+        "max_order_cap_usd": float,
+        "auto_update": bool,
+        "interval_hours": int,
+    },
+    "variational_auto": {
+        "command_port": int,
+        "signal_persist_sec": float,
+        "cooldown_sec": float,
+        "fill_timeout_sec": float,
+        "max_trades_per_session": int,
     },
 }
 
@@ -333,6 +360,10 @@ def load_config(config_file: str = "config.yaml", env_file: str = ".env", *,
         raise ConfigError("sizing.take_fraction must be in (0, 1] — taking "
                           "more than the profitable depth loses money on the "
                           "tail / 必须在 (0, 1] 之间")
+    analysis_interval_hours = int(_get(raw, "analysis", "interval_hours", 4))
+    if analysis_interval_hours <= 0 or 24 % analysis_interval_hours:
+        raise ConfigError("analysis.interval_hours must be a positive divisor "
+                          "of 24 / 必须是 24 的正整数因数")
 
     entropy_dex = _get(raw, "entropy", "dex", "io")
     if ((primary_venue == "tradexyz" and entropy_dex == "xyz")
@@ -377,6 +408,8 @@ def load_config(config_file: str = "config.yaml", env_file: str = ".env", *,
     hedge = hedges[0]
 
     return Config(
+        config_file=os.path.abspath(config_file),
+        env_file=os.path.abspath(env_file),
         symbol=symbol,
         primary_venue=primary_venue,
         hedge_venue=hedge_venue,
@@ -408,6 +441,10 @@ def load_config(config_file: str = "config.yaml", env_file: str = ".env", *,
         # mixing recorder rows: ``{symbol}`` is expanded at startup.
         recorder_csv=_symbol_path(_get(raw, "recorder", "csv",
                                        "logs/minutes_{symbol}.csv"), symbol),
+        analysis_auto_update=bool(_get(raw, "analysis", "auto_update", False)),
+        analysis_interval_hours=analysis_interval_hours,
+        analysis_threshold_buffer_bps=float(
+            _get(raw, "analysis", "threshold_buffer_bps", 2.0)),
         log_level=str(_get(raw, "logging", "level", "INFO")).upper(),
         status_interval_sec=float(_get(raw, "logging", "status_interval_sec", 30.0)),
         trades_csv=_symbol_path(_get(raw, "logging", "trades_csv",

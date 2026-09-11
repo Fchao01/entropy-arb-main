@@ -30,7 +30,7 @@ import logging
 import math
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .book import OrderBook
@@ -42,13 +42,15 @@ HEADER = ["minute_ts", "time_utc",
           "premium_open_bps", "premium_high_bps", "premium_low_bps",
           "premium_close_bps", "premium_mean_bps", "premium_std_bps",
           "sell_edge_mean_bps", "sell_edge_max_bps",
-          "buy_edge_mean_bps", "buy_edge_max_bps", "samples"]
+          "buy_edge_mean_bps", "buy_edge_max_bps", "samples",
+          "sell_capacity_min_usd", "buy_capacity_min_usd"]
 
 
 class _MinuteAgg:
     __slots__ = ("minute", "n", "p_open", "p_high", "p_low", "p_close",
                  "p_sum", "p_sumsq", "s_sum", "s_max", "b_sum", "b_max",
-                 "e_bid", "e_ask", "h_bid", "h_ask")
+                 "e_bid", "e_ask", "h_bid", "h_ask", "s_cap_min",
+                 "b_cap_min")
 
     def __init__(self, minute: int) -> None:
         self.minute = minute
@@ -59,9 +61,11 @@ class _MinuteAgg:
         self.s_max = -math.inf
         self.b_sum = 0.0
         self.b_max = -math.inf
+        self.s_cap_min = self.b_cap_min = math.inf
         self.e_bid = self.e_ask = self.h_bid = self.h_ask = 0.0
 
-    def add(self, e_bid: float, e_ask: float, h_bid: float, h_ask: float) -> None:
+    def add(self, e_bid: float, e_ask: float, h_bid: float, h_ask: float,
+            sell_capacity: float, buy_capacity: float) -> None:
         e_mid = (e_bid + e_ask) / 2.0
         h_mid = (h_bid + h_ask) / 2.0
         prem = (e_mid / h_mid - 1.0) * 1e4
@@ -79,6 +83,8 @@ class _MinuteAgg:
         self.s_max = max(self.s_max, sell_edge)
         self.b_sum += buy_edge
         self.b_max = max(self.b_max, buy_edge)
+        self.s_cap_min = min(self.s_cap_min, sell_capacity)
+        self.b_cap_min = min(self.b_cap_min, buy_capacity)
         self.e_bid, self.e_ask, self.h_bid, self.h_ask = e_bid, e_ask, h_bid, h_ask
 
     def row(self) -> list:
@@ -95,13 +101,14 @@ class _MinuteAgg:
                 f"{mean:.3f}", f"{math.sqrt(var):.3f}",
                 f"{self.s_sum / self.n:.3f}", f"{self.s_max:.3f}",
                 f"{self.b_sum / self.n:.3f}", f"{self.b_max:.3f}",
-                self.n]
+                self.n, f"{self.s_cap_min:.3f}", f"{self.b_cap_min:.3f}"]
 
 
 class MinuteRecorder:
     def __init__(self, path: str, entropy_book: OrderBook, hedge_book: OrderBook,
                  staleness_sec: float, interval_sec: float = 1.0) -> None:
         self.path = path
+        self.base_path = path
         self.entropy_book = entropy_book
         self.hedge_book = hedge_book
         self.staleness_sec = staleness_sec
@@ -110,8 +117,36 @@ class MinuteRecorder:
         self._agg: Optional[_MinuteAgg] = None
         self._fh = None
         self._writer = None
+        self.interval_hours = 0
+        self.active_period = ""
+
+    def enable_period_files(self, interval_hours: int) -> None:
+        """Write each local-time interval to its own CSV file."""
+        self.interval_hours = interval_hours
+
+    def _period_path(self, ts: float) -> tuple[str, str]:
+        if self.interval_hours <= 0:
+            return self.path, ""
+        dt = datetime.fromtimestamp(ts).astimezone()
+        start_hour = dt.hour - dt.hour % self.interval_hours
+        start = dt.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        end = start + timedelta(hours=self.interval_hours)
+        label = f"{start:%Y-%m-%d %H:%M}–{end:%Y-%m-%d %H:%M}"
+        root, ext = os.path.splitext(self.base_path)
+        return f"{root}_{start:%Y%m%d_%H%M}-{end:%H%M}{ext}".replace(":", ""), label
+
+    def completed_period(self, now: Optional[float] = None) -> tuple[str, str]:
+        now = time.time() if now is None else now
+        return self._period_path(now - self.interval_hours * 3600)
+
+    def start(self) -> None:
+        """Create the CSV and its header before the first complete minute."""
+        if self._fh is None:
+            self._open()
 
     def _open(self) -> None:
+        if self.interval_hours > 0:
+            self.path, self.active_period = self._period_path(time.time())
         d = os.path.dirname(self.path)
         if d:
             os.makedirs(d, exist_ok=True)
@@ -144,6 +179,15 @@ class MinuteRecorder:
     def sample(self, now: Optional[float] = None) -> None:
         """Take one sample; call ~1/sec. Rolls the minute over as needed."""
         now = time.time() if now is None else now
+        if self.interval_hours > 0:
+            wanted, label = self._period_path(now)
+            if wanted != self.path:
+                self._flush_agg()
+                if self._fh is not None:
+                    self._fh.close()
+                self._fh = self._writer = None
+                self.path, self.active_period = wanted, label
+                self._open()
         minute = int(now // 60)
         if self._agg is not None and self._agg.minute != minute:
             self._flush_agg()
@@ -156,7 +200,12 @@ class MinuteRecorder:
             return
         if self._agg is None:
             self._agg = _MinuteAgg(minute)
-        self._agg.add(e_bid, e_ask, h_bid, h_ask)
+        e_bids, e_asks = self.entropy_book.sorted_bids(), self.entropy_book.sorted_asks()
+        h_bids, h_asks = self.hedge_book.sorted_bids(), self.hedge_book.sorted_asks()
+        sell_capacity = min(e_bids[0][1], h_asks[0][1]) * h_ask
+        buy_capacity = min(e_asks[0][1], h_bids[0][1]) * e_ask
+        self._agg.add(e_bid, e_ask, h_bid, h_ask,
+                      sell_capacity, buy_capacity)
 
     def close(self) -> None:
         """Flush the partial minute and close the file (call on shutdown)."""

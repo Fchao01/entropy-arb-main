@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Entropy Arb</title>
+  <style>
+    :root { color-scheme: dark; --bg:#070b12; --panel:rgba(19,27,42,.78); --line:rgba(148,163,184,.14); --text:#f8fafc; --muted:#8c9bb0; --cyan:#31d7f4; --violet:#8b7cf6; --green:#43e39f; --red:#ff6b7d; }
+    * { box-sizing:border-box; }
+    body { width:356px; min-height:442px; margin:0; overflow:hidden; font:13px/1.45 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); background:radial-gradient(circle at 90% -8%,rgba(139,124,246,.24),transparent 38%),radial-gradient(circle at -12% 35%,rgba(49,215,244,.15),transparent 34%),var(--bg); }
+    .shell { padding:20px; }
+    header { display:flex; align-items:center; justify-content:space-between; }
+    .brand { display:flex; align-items:center; gap:11px; }
+    .logo { position:relative; display:grid; width:38px; height:38px; place-items:center; border:1px solid rgba(49,215,244,.32); border-radius:12px; background:linear-gradient(145deg,rgba(49,215,244,.17),rgba(139,124,246,.18)); box-shadow:inset 0 1px rgba(255,255,255,.08),0 8px 24px rgba(0,0,0,.28); }
+    .logo::before,.logo::after { position:absolute; width:17px; height:7px; border:2px solid var(--cyan); border-right:0; border-radius:6px 0 0 6px; content:""; }
+    .logo::before { transform:translateY(-5px); }
+    .logo::after { transform:translateY(5px) rotate(180deg); border-color:var(--violet); }
+    h1 { margin:0; font-size:15px; letter-spacing:-.01em; }
+    .subtitle { margin-top:2px; color:var(--muted); font-size:11px; }
+    .badge { display:flex; align-items:center; gap:7px; padding:6px 9px; border:1px solid var(--line); border-radius:999px; color:var(--muted); background:rgba(7,11,18,.55); font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+    .dot { width:7px; height:7px; border-radius:50%; background:#536174; }
+    .badge.active { color:var(--green); border-color:rgba(67,227,159,.24); }
+    .badge.active .dot { background:var(--green); box-shadow:0 0 10px var(--green); }
+    .hero { margin-top:20px; padding:17px; border:1px solid var(--line); border-radius:16px; background:linear-gradient(145deg,rgba(21,30,47,.88),rgba(12,18,29,.82)); box-shadow:inset 0 1px rgba(255,255,255,.035),0 18px 42px rgba(0,0,0,.2); }
+    .eyebrow { color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; }
+    .route { display:flex; align-items:center; gap:9px; margin-top:10px; }
+    .venue { font-size:16px; font-weight:750; }
+    .arrow { position:relative; flex:1; height:1px; background:linear-gradient(90deg,var(--cyan),var(--violet)); }
+    .arrow::after { position:absolute; right:-1px; top:-3px; width:6px; height:6px; border-top:1px solid var(--violet); border-right:1px solid var(--violet); content:""; transform:rotate(45deg); }
+    .route-note { margin-top:8px; color:var(--muted); font-size:11px; }
+    .connections { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
+    .connection { padding:12px; border:1px solid var(--line); border-radius:13px; background:var(--panel); }
+    .connection-top { display:flex; justify-content:space-between; color:var(--muted); font-size:10px; }
+    .connection-state { margin-top:5px; font-weight:700; }
+    .connection.online .connection-state { color:var(--green); }
+    .connection.online .mini-dot { background:var(--green); box-shadow:0 0 8px rgba(67,227,159,.5); }
+    .mini-dot { display:inline-block; width:6px; height:6px; margin-right:6px; border-radius:50%; background:#536174; }
+    .actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:14px; }
+    button { height:42px; border:0; border-radius:12px; cursor:pointer; font:inherit; font-weight:750; transition:transform .15s ease,opacity .15s ease; }
+    button:hover:not(:disabled) { transform:translateY(-1px); }
+    button:active:not(:disabled) { transform:translateY(0); }
+    button:disabled { cursor:default; opacity:.38; }
+    #start { color:#061016; background:linear-gradient(135deg,var(--cyan),#67f0cc); box-shadow:0 8px 24px rgba(49,215,244,.18); }
+    #stop { color:#d9e1ec; border:1px solid var(--line); background:rgba(21,30,47,.8); }
+    #arm { color:#ffc0c8; border:1px solid rgba(255,107,125,.35); background:rgba(255,107,125,.09); }
+    #arm.armed { color:#07130e; background:linear-gradient(135deg,var(--green),#7cf2bd); }
+    .notice { min-height:44px; margin-top:14px; padding:10px 12px; border-left:2px solid var(--violet); border-radius:2px 10px 10px 2px; color:var(--muted); background:rgba(139,124,246,.07); font-size:11px; }
+    .notice.error { color:#ffc0c8; border-color:var(--red); background:rgba(255,107,125,.08); }
+    footer { display:flex; justify-content:space-between; margin-top:15px; color:#627086; font-size:10px; }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="brand"><div class="logo" aria-hidden="true"></div><div><h1>Entropy Arb</h1><div class="subtitle">Variational CDP Forwarder</div></div></div>
+      <div id="badge" class="badge"><span class="dot"></span><span id="badgeText">Idle</span></div>
+    </header>
+    <section class="hero">
+      <div class="eyebrow">Execution route</div>
+      <div class="route"><span class="venue">Variational</span><span class="arrow"></span><span class="venue">RH</span></div>
+      <div class="route-note">本地安全转发 · 严格端点白名单 · CDP 1.3</div>
+    </section>
+    <section class="connections" aria-label="连接状态">
+      <div id="wsCard" class="connection"><div class="connection-top"><span>EVENT STREAM</span><span>8766</span></div><div class="connection-state"><span class="mini-dot"></span><span id="wsState">Disconnected</span></div></div>
+      <div id="restCard" class="connection"><div class="connection-top"><span>QUOTE API</span><span>8767</span></div><div class="connection-state"><span class="mini-dot"></span><span id="restState">Disconnected</span></div></div>
+      <div id="commandCard" class="connection"><div class="connection-top"><span>EXECUTION</span><span>8768</span></div><div class="connection-state"><span class="mini-dot"></span><span id="commandState">Disconnected</span></div></div>
+    </section>
+    <div class="actions"><button id="start" type="button">启动转发</button><button id="arm" type="button">实盘未武装</button><button id="stop" type="button">停止</button></div>
+    <div id="notice" class="notice">请先启动本地接收器，再打开 Variational 交易页并启动转发。</div>
+    <footer><span>localhost only</span><span>v1.0.0</span></footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

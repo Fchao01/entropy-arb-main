@@ -86,9 +86,9 @@ def test_renders_key_numbers():
         "notional": 50.0, "prem_bps": 15.0, "exp": 0.07, "fill": 0.05,
         "status": "filled/filled", "ok": True})
     out = render(eng)
-    for needle in ("ENTROPY", "RH", "SELL entropy", "BUY entropy",
+    for needle in ("ENTROPY", "RH", "SELL ENTROPY", "BUY ENTROPY",
                    "100.14", "99.99", "mid premium", "midline",
-                   "7 / 1", "sell_entropy", "filled/filled",
+                   "7 / 1",
                    "$+10.00", "LIVE", "s ago"):
         assert needle in out, f"{needle!r} missing from render"
     assert "render error" not in out
@@ -107,9 +107,22 @@ def test_renders_in_chinese():
     out = render(eng, lang="zh")
     for needle in ("实盘", "运行中", "交易所", "买一 / 卖一", "持仓", "会话",
                    "盈亏 (MTM)", "净敞口", "中间价溢价", "中枢", "区间",
-                   "卖出 entropy → 买入 RH", "买入 entropy → 卖出 RH",
+                   "卖出 ENTROPY → 买入 RH", "买入 ENTROPY → 卖出 RH",
                    "门槛 bps", "暂无执行", "日志事件", "秒前"):
         assert needle in out, f"{needle!r} missing from zh render"
+    assert "策略更新" in out and "未启用" in out
+
+
+def test_renders_four_hour_strategy_status():
+    eng = make_engine()
+    eng.strategy_update_status = "updated"
+    eng.strategy_period = "2026-09-11 08:00–2026-09-11 12:00"
+    eng.strategy_updated_at = time.mktime((2026, 9, 11, 12, 0, 5, 0, 0, -1))
+    eng.strategy_next_update = time.mktime((2026, 9, 11, 16, 0, 0, 0, 0, -1))
+    out = render(eng, lang="zh")
+    for needle in ("策略更新", "已更新", "策略配置", "策略数据时段", "08:00", "12:00",
+                   "生效时间", "下次更新", "16:00"):
+        assert needle in out
     # numbers unchanged by translation: sell hurdle midline+upper = +6
     assert "+6.00" in out
     # English render untouched by the zh table

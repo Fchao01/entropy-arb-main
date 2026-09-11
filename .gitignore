@@ -1,6 +1,8 @@
 # secrets & local config / 密钥与本地配置
 .env
+*.env
 config.yaml
+.DS_Store
 
 # runtime output / 运行时输出
 logs/

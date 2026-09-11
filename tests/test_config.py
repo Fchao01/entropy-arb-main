@@ -55,6 +55,19 @@ def test_minimal_defaults():
     assert cfg.hedge.lighter_profile.chain_id == 304
     assert cfg.take_fraction == 0.5          # defaults kick in
     assert cfg.recorder_enabled is True
+    assert cfg.config_file.endswith(".yaml")
+    assert cfg.analysis_auto_update is False
+    assert cfg.analysis_interval_hours == 4
+
+
+def test_each_command_keeps_its_own_config_and_symbol_paths():
+    text = MINIMAL + "\nanalysis:\n  auto_update: true\n  interval_hours: 4\n"
+    a = load(text, symbol="SKYH")
+    b = load(text, symbol="SNDK")
+    assert a.config_file != b.config_file
+    assert a.symbol == "SKYH" and b.symbol == "SNDK"
+    assert a.recorder_csv.endswith("_SKYH.csv")
+    assert b.recorder_csv.endswith("_SNDK.csv")
 
 
 def test_tradexyz_hedge():

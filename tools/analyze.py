@@ -25,6 +25,8 @@ import sys
 import time
 from datetime import datetime, timezone, timedelta
 
+import yaml
+
 CANDIDATES = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0, 20.0]
 
 
@@ -61,6 +63,8 @@ def load_rows(path: str, hours: float, min_samples: int, date: str = "") -> list
                     "prem_mean": float(r["premium_mean_bps"]),
                     "sell_max": float(r["sell_edge_max_bps"]),
                     "buy_max": float(r["buy_edge_max_bps"]),
+                    "sell_capacity": float(r.get("sell_capacity_min_usd") or "nan"),
+                    "buy_capacity": float(r.get("buy_capacity_min_usd") or "nan"),
                 })
             except (KeyError, ValueError):
                 continue
@@ -70,22 +74,64 @@ def load_rows(path: str, hours: float, min_samples: int, date: str = "") -> list
 def main() -> None:
     p = argparse.ArgumentParser(description="suggest thresholds from recorded "
                                             "minute data")
-    p.add_argument("--csv", default="logs/minutes.csv")
-    p.add_argument("--hours", type=float, default=0.0,
+    p.add_argument("--config", default="",
+                   help="read analysis settings from YAML and update that same file")
+    p.add_argument("--csv", default=None)
+    p.add_argument("--hours", type=float, default=None,
                    help="only use the last N hours (0 = all data)")
-    p.add_argument("--min-samples", type=int, default=10,
+    p.add_argument("--min-samples", type=int, default=None,
                    help="skip minutes with fewer fresh samples than this")
     p.add_argument("--date", default="",
                    help="analyze this UTC date (YYYY-MM-DD), e.g. yesterday")
     p.add_argument("--update-config", default="",
                    metavar="YAML",
                    help="update thresholds in this YAML with the suggestion")
-    p.add_argument("--fees-bps", type=float, default=0.0,
+    p.add_argument("--fees-bps", type=float, default=None,
                    help="SUM of both venues' taker fees in bps (each crossing "
                         "pays both legs); recorded edges are pre-fee, so this "
                         "is subtracted before counting firings (default 0.0 — "
                         "pass ~1.0 with a tradexyz hedge)")
+    p.add_argument("--take-fraction", type=float, default=None,
+                   help="fraction of conservative capacity to use for sizing")
+    p.add_argument("--max-order-cap", type=float, default=None,
+                   help="hard ceiling for suggested max_order_notional_usd")
+    p.add_argument("--threshold-buffer-bps", type=float, default=None,
+                   help="safety buffer added to upper/lower suggestions")
     args = p.parse_args()
+
+    if args.config:
+        try:
+            with open(args.config, encoding="utf-8") as fh:
+                yaml_config = yaml.safe_load(fh) or {}
+        except FileNotFoundError:
+            p.error(f"config file not found: {args.config}")
+        analysis = yaml_config.get("analysis") or {}
+        sizing = yaml_config.get("sizing") or {}
+        args.csv = args.csv or analysis.get("csv")
+        args.hours = args.hours if args.hours is not None else analysis.get("hours", 0.0)
+        args.min_samples = (args.min_samples if args.min_samples is not None
+                            else analysis.get("min_samples", 10))
+        args.fees_bps = (args.fees_bps if args.fees_bps is not None
+                         else analysis.get("fees_bps", 0.0))
+        args.take_fraction = (args.take_fraction if args.take_fraction is not None
+                              else sizing.get("take_fraction", 0.5))
+        args.max_order_cap = (args.max_order_cap if args.max_order_cap is not None
+                              else analysis.get("max_order_cap_usd", 500.0))
+        args.threshold_buffer_bps = (
+            args.threshold_buffer_bps if args.threshold_buffer_bps is not None
+            else analysis.get("threshold_buffer_bps", 2.0))
+        args.update_config = args.config
+        if not args.csv:
+            p.error("analysis.csv is required in the selected YAML")
+    else:
+        args.csv = args.csv or "logs/minutes.csv"
+        args.hours = 0.0 if args.hours is None else args.hours
+        args.min_samples = 10 if args.min_samples is None else args.min_samples
+        args.fees_bps = 0.0 if args.fees_bps is None else args.fees_bps
+        args.take_fraction = 0.5 if args.take_fraction is None else args.take_fraction
+        args.max_order_cap = 500.0 if args.max_order_cap is None else args.max_order_cap
+        args.threshold_buffer_bps = (2.0 if args.threshold_buffer_bps is None
+                                     else args.threshold_buffer_bps)
 
     try:
         date = args.date
@@ -152,19 +198,51 @@ def main() -> None:
 
     # default suggestion: the band that fired in ~10% of minutes (p90 of the
     # fee-adjusted executable room), floored at 1 bps — tune from the table
-    sug_upper = max(round(pctl(sorted(sell_room), 90) * 2) / 2, 1.0)
-    sug_lower = max(round(pctl(sorted(buy_room), 90) * 2) / 2, 1.0)
+    raw_upper = max(round(pctl(sorted(sell_room), 90) * 2) / 2, 1.0)
+    raw_lower = max(round(pctl(sorted(buy_room), 90) * 2) / 2, 1.0)
+    buffer_bps = max(args.threshold_buffer_bps, 0.0)
+    sug_upper = round(raw_upper + buffer_bps, 3)
+    sug_lower = round(raw_lower + buffer_bps, 3)
+    sell_caps = sorted(r["sell_capacity"] for r in rows
+                       if math.isfinite(r["sell_capacity"]) and r["sell_capacity"] > 0)
+    buy_caps = sorted(r["buy_capacity"] for r in rows
+                      if math.isfinite(r["buy_capacity"]) and r["buy_capacity"] > 0)
+    sizing_text = ""
+    if sell_caps and buy_caps:
+        sell_size = min(pctl(sell_caps, 10) * args.take_fraction,
+                        args.max_order_cap)
+        buy_size = min(pctl(buy_caps, 10) * args.take_fraction,
+                       args.max_order_cap)
+        common_size = math.floor(min(sell_size, buy_size))
+        sizing_text = f"""
+conservative sizing from the 10th percentile of minute minimum top-level
+capacity × take_fraction={args.take_fraction:.2f} / 根据分钟最小容量第 10 百分位估算:
+  SELL primary direction: ${sell_size:.2f}
+  BUY primary direction:  ${buy_size:.2f}
+
+sizing:
+  take_fraction: {args.take_fraction}
+  max_order_notional_usd: {common_size}
+"""
     print(f"""
-suggested starting point (fires ~10% of minutes, already net of the
-{fees:.1f} bps fees passed via --fees-bps; a full round trip nets
->= upper+lower bps after fees) /
-建议起点（约 10% 的分钟触发；已扣除 --fees-bps 传入的 {fees:.1f} bps 手续费，
-一次完整往返扣费后净赚 >= upper+lower bps）:
+raw statistical suggestion (shown unchanged; already net of fees) /
+原始统计建议（保持原值显示，已扣除手续费）:
+
+thresholds:
+  midline_bps: {midline}
+  upper_bps: {raw_upper}
+  lower_bps: {raw_lower}
+
+safety buffer / 安全缓冲:
+  threshold_buffer_bps: {buffer_bps}
+
+final values for YAML = raw + buffer / 最终写入 YAML = 原始值 + 缓冲:
 
 thresholds:
   midline_bps: {midline}
   upper_bps: {sug_upper}
   lower_bps: {sug_lower}
+{sizing_text}
 
 Re-run with --hours to focus on recent regimes; premiums drift, so refresh
 these numbers regularly. / 溢价中枢会漂移，请定期重新分析并更新配置。
@@ -178,9 +256,14 @@ these numbers regularly. / 溢价中枢会漂移，请定期重新分析并更�
             "midline_bps": midline,
             "upper_bps": sug_upper,
             "lower_bps": sug_lower,
+            "max_order_notional_usd": common_size if sell_caps and buy_caps else None,
         }
         for key, value in replacements.items():
-            pat = rf"(^\s*{re.escape(key)}\s*:\s*)[^#\r\n]+"
+            if value is None:
+                continue
+            # Replace only the scalar token.  Do not consume the whitespace
+            # before an inline comment; YAML requires whitespace before '#'.
+            pat = rf"(^\s*{re.escape(key)}\s*:\s*)[^#\s\r\n]+"
             text, n = re.subn(pat, rf"\g<1>{value}", text,
                               count=1, flags=re.MULTILINE)
             if n != 1:

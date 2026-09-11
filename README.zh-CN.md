@@ -69,6 +69,44 @@ cp config.example.yaml config.yaml       # 策略配置（阈值、规模、风�
 cp .env.example .env                     # 密钥——交易必填
 ```
 
+### Variational 浏览器成交 + Lighter 自动对冲
+
+该模式沿用 `variational-v1` 的架构：Variational 由已登录的钱包网页负责，
+Chrome 扩展仅通过 CDP 转发白名单内的报价、成交事件和持仓。程序捕获到
+Variational `confirmed` 成交后，在 Lighter 提交反向 IOC 对冲单。它不会自动
+点击网页，也不是双腿同时发单的全自动套利。
+
+1. 在 `chrome://extensions` 开启开发者模式，加载本仓库的
+   `chrome_extension/` 目录。
+2. 运行只读接收器：`python3 tools/variational_receiver.py`。
+3. 打开并登录 Variational Omni，点击扩展的 `Start`，确认终端出现报价和持仓。
+4. 确认链路后安装实盘依赖并显式添加 `--live`：
+
+```bash
+pip install -r requirements-live.txt
+python3 tools/variational_lighter_hedge.py --symbol BTC --hedge lighter --live
+```
+
+### Variational + RH 按 bp 自动交易（实验性）
+
+`tools/variational_rh_auto.py` 使用 YAML 中的 `thresholds` 自动判断开平仓。
+Chrome 扩展负责填写 Variational 数量并提交一次；只有 Variational 成交事件为
+`confirmed` 后，Python 才会在 RH 发送反向 IOC。默认是 dry-run，不点击最终
+提交按钮，也不向 RH 下单：
+
+```bash
+python tools/variational_rh_auto.py --config config.example.yaml --env-file 4.env
+```
+
+更新扩展后必须在 `chrome://extensions` 点击“重新加载”，然后在 Variational
+页面重新 Stop/Start。dry-run 通过后，实盘需要同时满足两个独立开关：命令行
+添加 `--live`，并在扩展中点击“实盘未武装”使其变成“实盘已武装”。任何成交
+确认超时或 RH 对冲结果未知都会停止程序并要求人工检查。YAML 的单笔金额必须
+同时达到 `sizing.min_order_notional_usd` 和 RH 市场最低金额。
+
+这是实盘命令。Variational 已成交但 Lighter 不在线、盘口陈旧或回报未知时，
+程序会输出 `HEDGE MANUALLY`，需要立即人工处理。
+
 交易市场**不在**配置文件中——每次启动时用命令行参数显式指定：
 `--symbol`、`--primary`（主交易腿）和 `--hedge`（一个或两个对冲腿，逗号分隔）。
 例如让 Lighter Robinhood 作为主腿、同时用 Entropy 与 Lighter 主网对冲：

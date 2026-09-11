@@ -19,6 +19,7 @@ import csv
 import logging
 import os
 import time
+import sys
 from collections import deque
 from typing import Dict, List, Optional
 
@@ -90,6 +91,11 @@ class Engine:
         self._venue_fetch_fails: Dict[str, int] = {}
         # per-execution records for the dashboard (newest last)
         self.recent_trades: deque = deque(maxlen=50)
+        self.strategy_update_status = "disabled"
+        self.strategy_period = "startup YAML"
+        self.strategy_updated_at = 0.0
+        self.strategy_update_error = ""
+        self.strategy_next_update = 0.0
 
     # ------------------------------------------------------------- utilities
 
@@ -203,6 +209,8 @@ class Engine:
         if cfg.recorder_enabled or self.record_only:
             self.recorder = MinuteRecorder(cfg.recorder_csv, self.entropy.book,
                                            self.hedge.book, cfg.staleness_sec)
+            if cfg.analysis_auto_update:
+                self.recorder.enable_period_files(cfg.analysis_interval_hours)
             tasks.append(asyncio.create_task(self.recorder.run(self.stop),
                                              name="recorder"))
         if not self.record_only:
@@ -213,6 +221,9 @@ class Engine:
             tasks.append(asyncio.create_task(self._http_keepalive_loop(),
                                              name="keepalive"))
         tasks.append(asyncio.create_task(self._status_loop(), name="status"))
+        if cfg.analysis_auto_update and not self.record_only:
+            tasks.append(asyncio.create_task(self._analysis_update_loop(),
+                                             name="analysis-update"))
         if live:
             tasks.append(asyncio.create_task(self._reconcile_loop(),
                                              name="reconcile"))
@@ -228,6 +239,58 @@ class Engine:
         await asyncio.gather(*tasks, return_exceptions=True)
         for v in self.venues.values():
             await v.close()
+
+    def _next_interval_boundary(self) -> float:
+        hours = self.cfg.analysis_interval_hours
+        now = time.time()
+        local = time.localtime(now)
+        elapsed = local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec
+        return now + hours * 3600 - (elapsed % (hours * 3600))
+
+    async def _analysis_update_loop(self) -> None:
+        self.strategy_update_status = "waiting"
+        while not self.stop.is_set():
+            self.strategy_next_update = self._next_interval_boundary()
+            try:
+                await asyncio.wait_for(self.stop.wait(),
+                                       timeout=max(1, self.strategy_next_update - time.time() + 2))
+                return
+            except asyncio.TimeoutError:
+                pass
+            csv_path, period = self.recorder.completed_period()
+            self.strategy_update_status = "updating"
+            cmd = [sys.executable, os.path.join(os.path.dirname(__file__), "..", "tools", "analyze.py"),
+                   "--config", self.cfg.config_file, "--csv", csv_path]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            out, err = await proc.communicate()
+            if proc.returncode:
+                self.strategy_update_status = "failed"
+                self.strategy_update_error = err.decode(errors="replace").strip().splitlines()[-1][:160]
+                log.error("4-hour strategy update failed for %s: %s", period,
+                          self.strategy_update_error)
+                continue
+            try:
+                from .config import load_config
+                new = load_config(self.cfg.config_file, self.cfg.env_file,
+                                  symbol=self.cfg.symbol,
+                                  hedge_venue=self.cfg.hedge_venue,
+                                  primary_venue=self.cfg.primary_venue)
+                self.cfg.midline_bps = new.midline_bps
+                self.cfg.upper_bps = new.upper_bps
+                self.cfg.lower_bps = new.lower_bps
+                self.cfg.max_order_notional = new.max_order_notional
+                self.strategy_period = period
+                self.strategy_updated_at = time.time()
+                self.strategy_update_status = "updated"
+                self.strategy_update_error = ""
+                log.warning("4-hour strategy updated from %s: mid=%+.2f upper=%.2f lower=%.2f cap=$%.0f",
+                            period, self.cfg.midline_bps, self.cfg.upper_bps,
+                            self.cfg.lower_bps, self.cfg.max_order_notional)
+            except Exception as exc:
+                self.strategy_update_status = "failed"
+                self.strategy_update_error = str(exc)[:160]
+                log.exception("YAML was analyzed but hot reload failed")
         log.info("shutdown — %d trades, %d hedges, exp edge $%.4f, "
                  "fill edge $%.4f", self.trades, self.hedges,
                  self.total_exp_edge, self.total_fill_edge)

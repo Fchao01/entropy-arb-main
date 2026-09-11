@@ -6,6 +6,7 @@ import csv
 import os
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -53,6 +54,8 @@ def test_minute_aggregation_and_rollover():
     # closes carry the last books
     assert float(m2["entropy_bid"]) == 100.09
     assert float(m2["hedge_ask"]) == 100.01
+    assert float(m2["sell_capacity_min_usd"]) > 0
+    assert float(m2["buy_capacity_min_usd"]) > 0
 
 
 def test_stale_books_are_skipped():
@@ -80,6 +83,22 @@ def test_append_keeps_single_header():
         lines = fh.read().strip().splitlines()
     assert len(lines) == 3             # one header + two rows
     assert lines[0].startswith("minute_ts,")
+
+
+def test_four_hour_period_paths_do_not_accumulate_suffixes():
+    e_book, h_book = OrderBook(), OrderBook()
+    rec = MinuteRecorder(os.path.join(tempfile.mkdtemp(), "minutes_LIT.csv"),
+                         e_book, h_book, staleness_sec=1e9)
+    rec.enable_period_files(4)
+    ts1 = time.mktime((2026, 9, 11, 8, 30, 0, 0, 0, -1))
+    ts2 = time.mktime((2026, 9, 11, 12, 30, 0, 0, 0, -1))
+    p1, label1 = rec._period_path(ts1)
+    rec.path = p1
+    p2, label2 = rec._period_path(ts2)
+    assert p1.endswith("minutes_LIT_20260911_0800-1200.csv")
+    assert p2.endswith("minutes_LIT_20260911_1200-1600.csv")
+    assert "08:00" in label1 and "12:00" in label1
+    assert "12:00" in label2 and "16:00" in label2
 
 
 if __name__ == "__main__":

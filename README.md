@@ -77,6 +77,46 @@ cp config.example.yaml config.yaml       # the strategy (thresholds, sizing, ris
 cp .env.example .env                     # credentials — required to trade
 ```
 
+### Variational browser fills + automatic Lighter hedge
+
+This mode follows the `variational-v1` architecture: the authenticated
+Variational wallet remains in Chrome, while an allowlisted CDP extension
+forwards quotes, trade events, and portfolio updates to localhost. After a
+Variational fill reaches `confirmed`, Python sends the opposite Lighter IOC
+hedge. It does not click the web UI and is not simultaneous fully-automatic
+two-leg arbitrage.
+
+1. Enable developer mode in `chrome://extensions` and load this repository's
+   `chrome_extension/` directory as an unpacked extension.
+2. Run the read-only receiver: `python3 tools/variational_receiver.py`.
+3. Open and log into Variational Omni, then press `Start` in the extension.
+4. After verifying data flow, install live dependencies and explicitly add
+   `--live`:
+
+```bash
+pip install -r requirements-live.txt
+python3 tools/variational_lighter_hedge.py --symbol BTC --hedge lighter --live
+```
+
+### Threshold-driven Variational + RH automation (experimental)
+
+`tools/variational_rh_auto.py` consumes the YAML bands and drives one
+Variational page submission through the extension. It waits for a confirmed
+Variational trade event before sending the opposite RH IOC. Dry-run is the
+default and never clicks final submit or sends an RH order:
+
+```bash
+python tools/variational_rh_auto.py --config config.example.yaml --env-file 4.env
+```
+
+After updating the extension, reload it at `chrome://extensions`, then Stop /
+Start it on the Variational page. Live execution requires two independent
+switches: `--live` on the CLI and the extension's live-arm button. The runtime
+halts on confirmation timeouts or an unknown/failed RH hedge.
+
+If Lighter is unavailable, stale, or returns an unknown result after the
+Variational fill, the process emits `HEDGE MANUALLY` for immediate attention.
+
 The markets are **not** in the config file — you state them explicitly on
 every start: `--symbol`, `--primary` (the main leg), and `--hedge` (one or
 two comma-separated hedge venues). For example, to trade Lighter Robinhood

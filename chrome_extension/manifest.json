@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Entropy Arb Variational Forwarder",
+  "version": "1.1.0",
+  "description": "Forwards allowlisted Variational events and executes separately armed local commands.",
+  "permissions": ["debugger", "tabs", "activeTab"],
+  "host_permissions": ["https://omni.variational.io/*"],
+  "action": {"default_popup": "popup.html"},
+  "background": {"service_worker": "background.js"},
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:*"
+  }
+}
