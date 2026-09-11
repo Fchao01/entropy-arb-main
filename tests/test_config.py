@@ -58,10 +58,11 @@ def test_minimal_defaults():
     assert cfg.config_file.endswith(".yaml")
     assert cfg.analysis_auto_update is False
     assert cfg.analysis_interval_hours == 4
+    assert cfg.analysis_update_hour == 0
 
 
 def test_each_command_keeps_its_own_config_and_symbol_paths():
-    text = MINIMAL + "\nanalysis:\n  auto_update: true\n  interval_hours: 4\n"
+    text = MINIMAL + "\nanalysis:\n  auto_update: true\n  interval_hours: 24\n  update_hour: 8\n"
     a = load(text, symbol="SKYH")
     b = load(text, symbol="SNDK")
     assert a.config_file != b.config_file

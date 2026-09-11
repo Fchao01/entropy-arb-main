@@ -97,10 +97,11 @@ recorder:
 # `python3 tools/analyze.py --config config.yaml` reads these values and writes
 # the final thresholds and sizing recommendation back into the same YAML.
 analysis:
-  # Split recorder data at local 4-hour boundaries, analyze the completed
-  # period, update this YAML, then hot-load the new strategy into the bot.
+  # At local 08:00 each day, analyze the completed 08:00-to-08:00 period,
+  # update this YAML, then hot-load the new strategy into the bot.
   auto_update: false
-  interval_hours: 4
+  interval_hours: 24
+  update_hour: 8
   symbol: XAU
   proxy: http://127.0.0.1:7897
   ws_port: 8766

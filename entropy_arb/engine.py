@@ -210,7 +210,8 @@ class Engine:
             self.recorder = MinuteRecorder(cfg.recorder_csv, self.entropy.book,
                                            self.hedge.book, cfg.staleness_sec)
             if cfg.analysis_auto_update:
-                self.recorder.enable_period_files(cfg.analysis_interval_hours)
+                self.recorder.enable_period_files(cfg.analysis_interval_hours,
+                                                  cfg.analysis_update_hour)
             tasks.append(asyncio.create_task(self.recorder.run(self.stop),
                                              name="recorder"))
         if not self.record_only:
@@ -244,8 +245,13 @@ class Engine:
         hours = self.cfg.analysis_interval_hours
         now = time.time()
         local = time.localtime(now)
-        elapsed = local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec
-        return now + hours * 3600 - (elapsed % (hours * 3600))
+        anchor = time.mktime((local.tm_year, local.tm_mon, local.tm_mday,
+                              self.cfg.analysis_update_hour, 0, 0,
+                              local.tm_wday, local.tm_yday, -1))
+        if anchor <= now:
+            elapsed = now - anchor
+            anchor += (int(elapsed // (hours * 3600)) + 1) * hours * 3600
+        return anchor
 
     async def _analysis_update_loop(self) -> None:
         self.strategy_update_status = "waiting"
@@ -267,7 +273,7 @@ class Engine:
             if proc.returncode:
                 self.strategy_update_status = "failed"
                 self.strategy_update_error = err.decode(errors="replace").strip().splitlines()[-1][:160]
-                log.error("4-hour strategy update failed for %s: %s", period,
+                log.error("scheduled strategy update failed for %s: %s", period,
                           self.strategy_update_error)
                 continue
             try:
@@ -284,7 +290,7 @@ class Engine:
                 self.strategy_updated_at = time.time()
                 self.strategy_update_status = "updated"
                 self.strategy_update_error = ""
-                log.warning("4-hour strategy updated from %s: mid=%+.2f upper=%.2f lower=%.2f cap=$%.0f",
+                log.warning("scheduled strategy updated from %s: mid=%+.2f upper=%.2f lower=%.2f cap=$%.0f",
                             period, self.cfg.midline_bps, self.cfg.upper_bps,
                             self.cfg.lower_bps, self.cfg.max_order_notional)
             except Exception as exc:

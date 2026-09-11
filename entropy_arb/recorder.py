@@ -118,18 +118,25 @@ class MinuteRecorder:
         self._fh = None
         self._writer = None
         self.interval_hours = 0
+        self.period_anchor_hour = 0
         self.active_period = ""
 
-    def enable_period_files(self, interval_hours: int) -> None:
+    def enable_period_files(self, interval_hours: int, anchor_hour: int = 0) -> None:
         """Write each local-time interval to its own CSV file."""
         self.interval_hours = interval_hours
+        self.period_anchor_hour = anchor_hour
 
     def _period_path(self, ts: float) -> tuple[str, str]:
         if self.interval_hours <= 0:
             return self.path, ""
         dt = datetime.fromtimestamp(ts).astimezone()
-        start_hour = dt.hour - dt.hour % self.interval_hours
-        start = dt.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        anchor = dt.replace(hour=self.period_anchor_hour, minute=0, second=0,
+                            microsecond=0)
+        if dt < anchor:
+            anchor -= timedelta(days=1)
+        elapsed_hours = int((dt - anchor).total_seconds() // 3600)
+        start = anchor + timedelta(
+            hours=(elapsed_hours // self.interval_hours) * self.interval_hours)
         end = start + timedelta(hours=self.interval_hours)
         label = f"{start:%Y-%m-%d %H:%M}–{end:%Y-%m-%d %H:%M}"
         root, ext = os.path.splitext(self.base_path)

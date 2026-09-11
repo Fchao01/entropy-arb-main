@@ -136,6 +136,7 @@ class Config:
     recorder_csv: str
     analysis_auto_update: bool
     analysis_interval_hours: int
+    analysis_update_hour: int
     analysis_threshold_buffer_bps: float
     # logging
     log_level: str
@@ -226,6 +227,7 @@ _SCHEMA: Dict[str, Any] = {
         "max_order_cap_usd": float,
         "auto_update": bool,
         "interval_hours": int,
+        "update_hour": int,
     },
     "variational_auto": {
         "command_port": int,
@@ -364,6 +366,10 @@ def load_config(config_file: str = "config.yaml", env_file: str = ".env", *,
     if analysis_interval_hours <= 0 or 24 % analysis_interval_hours:
         raise ConfigError("analysis.interval_hours must be a positive divisor "
                           "of 24 / 必须是 24 的正整数因数")
+    analysis_update_hour = int(_get(raw, "analysis", "update_hour", 0))
+    if not 0 <= analysis_update_hour <= 23:
+        raise ConfigError("analysis.update_hour must be between 0 and 23 / "
+                          "必须在 0 到 23 之间")
 
     entropy_dex = _get(raw, "entropy", "dex", "io")
     if ((primary_venue == "tradexyz" and entropy_dex == "xyz")
@@ -443,6 +449,7 @@ def load_config(config_file: str = "config.yaml", env_file: str = ".env", *,
                                        "logs/minutes_{symbol}.csv"), symbol),
         analysis_auto_update=bool(_get(raw, "analysis", "auto_update", False)),
         analysis_interval_hours=analysis_interval_hours,
+        analysis_update_hour=analysis_update_hour,
         analysis_threshold_buffer_bps=float(
             _get(raw, "analysis", "threshold_buffer_bps", 2.0)),
         log_level=str(_get(raw, "logging", "level", "INFO")).upper(),

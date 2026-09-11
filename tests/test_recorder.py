@@ -101,6 +101,21 @@ def test_four_hour_period_paths_do_not_accumulate_suffixes():
     assert "12:00" in label2 and "16:00" in label2
 
 
+def test_daily_period_is_anchored_at_eight_am():
+    e_book, h_book = OrderBook(), OrderBook()
+    rec = MinuteRecorder(os.path.join(tempfile.mkdtemp(), "minutes_SNDK.csv"),
+                         e_book, h_book, staleness_sec=1e9)
+    rec.enable_period_files(24, anchor_hour=8)
+    before = time.mktime((2026, 9, 11, 7, 59, 0, 0, 0, -1))
+    after = time.mktime((2026, 9, 11, 8, 1, 0, 0, 0, -1))
+    p1, label1 = rec._period_path(before)
+    p2, label2 = rec._period_path(after)
+    assert p1.endswith("minutes_SNDK_20260910_0800-0800.csv")
+    assert "2026-09-10 08:00" in label1 and "2026-09-11 08:00" in label1
+    assert p2.endswith("minutes_SNDK_20260911_0800-0800.csv")
+    assert "2026-09-12 08:00" in label2
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
